@@ -8,49 +8,26 @@
 !     completely filled
       INTEGER, PARAMETER :: prtExtFac = 2
 
-      TYPE pDisType
-!        Number of particles to be seeded in the domain
-         INTEGER :: n = 0
-!        Particle release rate at inlet
-         REAL(KIND=8) :: nd = 0D0
-!        Uniform particle diameter
-         REAL(KIND=8) dia
-!        Uniform particle density
-         REAL(KIND=8) rho
-!        Restitution coefficient
-         REAL(KIND=8) :: k = 1D0
-!        Total mass of particles in this class
-         REAL(KIND=8) m
-!        The average velocity of particle in this class
-         REAL(KIND=8) u(3)
-!        Total kinetic energy 
-         REAL(KIND=8) E
-!        Collision frequency
-         REAL(KIND=8) cf
-!        RMS of relative velocity of colliding particles
-         REAL(KIND=8) ur
-!        Particle as tracers
-         LOGICAL :: tracer = .FALSE.
-!        Keep particles position fixed
-         LOGICAL :: fixP = .FALSE.
-      END TYPE pDisType
-
-
 !!! may want to make another subtype later just called box (or use stack types) that
 !!! contains individual box's + dimensions/elementss, then sb is just the collection
 
-!     Search box type
+      TYPE boxType
+!     Box dimensions (minx,maxx,miny,maxy,minz,maxz)
+            REAL(KIND=8), ALLOCATABLE :: dim(:)
+!     Elements contained in searchbox
+            INTEGER, ALLOCATABLE :: els(:)
+      END TYPE
+
+!     Search box collection type
       TYPE sbType
-!        Created?
+!     Created?
          LOGICAL :: crtd = .FALSE.
 !     Number of boxes in each direction
          INTEGER n(3)
 !     Size of boxes
          REAL(KIND=8) :: step(3)
-!      Searchbox dimensions
-         REAL(KIND=8), ALLOCATABLE :: dim(:,:)
-!      Elements contained in searchbox
-         INTEGER, ALLOCATABLE :: els(:,:)
+!     Individual boxes
+         TYPE(boxtype), ALLOCATABLE :: box(:)
       CONTAINS
 !     Sets up the search boxes pertaining to msh
          PROCEDURE :: new => newSb
@@ -65,12 +42,10 @@
          INTEGER(KIND=8) :: eID=0
 !     Particle ID
          INTEGER(KIND=8) :: pID=0
-!     Particle distribution ID
-         INTEGER(KIND=8) :: dID=0
 !     Position
-         REAL(KIND=8) x(3,3)
+         REAL(KIND=8) x(3)
 !     Velocity
-         REAL(KIND=8) u(3,4)
+         REAL(KIND=8) u(3)
       END TYPE pRawType
 
       TYPE prtType
@@ -88,8 +63,6 @@
          INTEGER, ALLOCATABLE :: ptr(:)
 !        Data
          TYPE(pRawType), ALLOCATABLE :: dat(:)
-!        Particle distribution properties
-         TYPE(pDisType), ALLOCATABLE :: dis(:)
 !        Material properties
          TYPE(matType) :: mat
 
@@ -242,22 +215,23 @@
 !--------------------------------------------------------------------
       SUBROUTINE newSb(sb,msh)
       CLASS(mshType), INTENT(IN) :: msh
-      CLASS(sbType), INTENT(OUT):: sb
+      CLASS(sbType), INTENT(INOUT):: sb
       INTEGER :: ii,jj,cnt2,kk
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
       REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl)
       INTEGER, ALLOCATABLE :: sbel(:)
+      INTEGER :: split(nsd)
+      IF (sb%crtd) RETURN
 
  !!     ! Will need to replace eventually with something that targets element size
-      INTEGER :: split(nsd)
+      
       split=(/10,10,10/)
       sb%n=split
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
-      ALLOCATE(sb%dim(2*nsd,sb%n(1)*sb%n(2)*sb%n(3)))
-
+      ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
       ALLOCATE(sbel(msh%nEl))
-      ALLOCATE(sb%els(sb%n(1)*sb%n(2)*sb%n(3),msh%nEl))
+
 
       ! these sequences are just for allocating sbdim
       ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
@@ -281,25 +255,25 @@
       ! Allocating sb, such that they overlap by 50%
       ! Direction 1
       do ii=1,sb%n(1)
-         sb%dim(1,(seq1+ii-1)) = MINVAL(msh%x(1,:)) 
+         sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:)) 
      2       + sb%step(1)*(ii-1)/2
       end do
 
       ! Direction 2
       do ii=1,sb%n(2)
-         sb%dim(3,seq2+(ii-1)*split(1)) = MINVAL(msh%x(2,:))
+         sb%box(seq2+(ii-1)*split(1))%dim(3) = MINVAL(msh%x(2,:))
      2       + sb%step(2)*(ii-1)/2
       end do
 
       ! Direction 3
       do ii=1,sb%n(3)
-         sb%dim(5,seq3+(ii-1)*split(1)*split(2))=MINVAL(msh%x(3,:))
-     2        +sb%step(3)*(ii-1)/2
+         sb%box(seq3+(ii-1)*split(1)*split(2))%dim(5)=
+     2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2
       end do
 
-      sb%dim(2,:) = sb%dim(1,:) + sb%step(1)
-      sb%dim(4,:) = sb%dim(3,:) + sb%step(2)
-      sb%dim(6,:) = sb%dim(5,:) + sb%step(3)
+      sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
+      sb%box%dim(4) = sb%box%dim(3) + sb%step(2)
+      sb%box%dim(6) = sb%box%dim(5) + sb%step(3)
 
       ! Making boxes surrounding elements
       do ii=1,msh%Nel
@@ -309,22 +283,24 @@
          end do
       end do
 
-      do ii=1,split(1)*split(2)*split(3)
+      do ii=1,sb%n(1)*sb%n(2)*sb%n(3)
          cnt2=1
          sbel=0
          do jj=1,msh%Nel
             ! Check if elements are completely outside searchbox
             do kk=1,nsd
                ! Cycle if min value elbox .gt. max value searchbox & vice-verse
-               if (elbox(2*kk-1,jj).lt.sb%dim(ii,2*kk  )) cycle
-               if (elbox(2*kk  ,jj).gt.sb%dim(ii,2*kk-1)) cycle
+               if (elbox(2*kk-1,jj).lt.sb%box(ii)%dim(2*kk  )) cycle
+               if (elbox(2*kk  ,jj).gt.sb%box(ii)%dim(2*kk-1)) cycle
             end do
 
             sbel(cnt2) = jj
             cnt2=cnt2+1
             !end if
          end do
-         sb%els(ii,:)=sbel
+         ALLOCATE(sb%box(ii)%dim(2*nsd))
+         ALLOCATE(sb%box(ii)%els(msh%nEl))
+         sb%box(ii)%els=sbel
       end do
       sb%crtd = .TRUE.
 
@@ -342,9 +318,9 @@
       INTEGER :: xsteps(nsd), i(nsd)
 
       ! Set domain back to zero
-      xzero(1) = x(1) - minval(sb%dim(1,:))
-      xzero(2) = x(2) - minval(sb%dim(3,:))
-      xzero(3) = x(3) - minval(sb%dim(5,:))
+      xzero(1) = x(1) - minval(sb%box(:)%dim(1))
+      xzero(2) = x(2) - minval(sb%box(:)%dim(3))
+      xzero(3) = x(3) - minval(sb%box(:)%dim(5))
 
       ! Find which searchbox the particle is in
       ! Number of searchbox steps in x,y,and z
@@ -369,13 +345,11 @@
       END FUNCTION idSB
 !--------------------------------------------------------------------
 !     First checks to see if the particle is still in this cell,
-!     otherwise will search all the elements in the search box. Returns
-!     -1 if particle is outisde of the mesh
+!     otherwise will search all the elements in the search box.
 
-!!! Doesn't work
       FUNCTION shapeFPrt(prt, ip, N,msh) RESULT(e)
       IMPLICIT NONE
-      CLASS(prtType), INTENT(IN) :: prt
+      CLASS(prtType), INTENT(IN),TARGET :: prt
       INTEGER, INTENT(IN) :: ip
       REAL(KIND=8), INTENT(OUT) :: N(4)
       TYPE(mshType), INTENT(IN) :: msh
@@ -384,52 +358,130 @@
       INTEGER, PARAMETER :: TIME_POINT=CUR, iM=1
 
       LOGICAL NOX
-      INTEGER ie , iSb(2**nsd)
+      INTEGER  iSb(2**nsd)
       TYPE(pRawType), POINTER :: p
+      TYPE(boxType),  POINTER :: b
+      INTEGER :: ii,cnt,a
+      REAL(KIND=8) :: Jac,xXi(nsd,nsd), xiX(nsd,nsd),Nx(nsd,nsd+1),
+     2 Nxi(nsd,nsd+1),prntx(nsd)
+      cnt=1
 
       IF (msh%eType.NE.eType_TET) 
      2   io%e = "shapeFPrt only defined for tet elements"
 
       p => prt%get(ip)
-      IF (p%eID .GT. 0) THEN
-         IF (NOX(msh,p%x(:,TIME_POINT),p%eID,N)) RETURN
+      p%eID=0
+      iSb = prt%sb%id(p%x)
+      b => prt%sb%box(iSb(1))
+
+
+      do ii=1,msh%nEl
+
+      xXi = 0D0
+
+      IF (nsd .EQ. 2) THEN
+      !
+      ! 2D not done
+      !
+!         DO a=1, eNoN
+!            xXi(:,1) = xXi(:,1) + x(:,a)*Nxi(1,a)
+!            xXi(:,2) = xXi(:,2) + x(:,a)*Nxi(2,a)
+!         END DO
+!
+!         Jac = xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1)
+!
+!         xiX(1,1) =  xXi(2,2)/Jac
+!         xiX(1,2) = -xXi(1,2)/Jac
+!         xiX(2,1) = -xXi(2,1)/Jac
+!         xiX(2,2) =  xXi(1,1)/Jac
+!
+!         
+!         DO a=1, eNoN
+!            Nx(1,a) = Nx(1,a)+ Nxi(1,a)*xiX(1,1) + Nxi(2,a)*xiX(2,1)
+!            Nx(2,a) = Nx(2,a)+ Nxi(1,a)*xiX(1,2) + Nxi(2,a)*xiX(2,2)
+!         END DO
+!
+      ELSE
+      ! 3D case
+
+      ! Setting up matrix to be inverted
+         DO a=1, msh%eNoN
+            xXi(:,1) = xXi(:,1) +
+     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(1,a)
+            xXi(:,2) = xXi(:,2) +
+     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(2,a)
+            xXi(:,3) = xXi(:,3) + 
+     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(3,a)
+         END DO
+         
+      ! Inverting matrix
+         Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
+     2       + xXi(1,2)*xXi(2,3)*xXi(3,1)
+     3       + xXi(1,3)*xXi(2,1)*xXi(3,2)
+     4       - xXi(1,1)*xXi(2,3)*xXi(3,2)
+     5       - xXi(1,2)*xXi(2,1)*xXi(3,3)
+     6       - xXi(1,3)*xXi(2,2)*xXi(3,1)
+
+         xiX(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))/Jac
+         xiX(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))/Jac
+         xiX(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))/Jac
+         xiX(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))/Jac
+         xiX(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))/Jac
+         xiX(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))/Jac
+         xiX(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))/Jac
+         xiX(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))/Jac
+         xiX(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))/Jac
+         
+      ! Finding particle coordinates in parent coordinate system
+         DO a=1, nsd
+            prntx(a) = xiX(a,1)*(p%x(1) - msh%x(1,msh%IEN(4,b%els(ii))))
+     2               + xiX(a,2)*(p%x(2) - msh%x(2,msh%IEN(4,b%els(ii))))
+     3               + xiX(a,3)*(p%x(3) - msh%x(3,msh%IEN(4,b%els(ii))))
+         END DO
       END IF
 
-      iSb = prt%sb%id(p%x(:,TIME_POINT))
-!      DO ie=1, prt%sb%c(iSb)%n
-!         e = prt%sb%c(iSb)%v(ie)
-!         IF (NOX(msh,p%x(:,TIME_POINT),e,N)) EXIT
-!      END DO
-      e=1
-      !IF (ie .GT. prt%sb%c(iSb)%n) e = -1
-      p%eID = e
+      ! Finding shape function values at particle coordinates
+      N(1) = prntx(1)
+      N(2) = prntx(2)
+      N(3) = prntx(3)
+      N(4) = 1 - prntx(1) - prntx(2)
+     2 - prntx(3)
 
+      ! Checking if all shape functions are positive
+      IF (ALL(N.gt.0D0)) then
+         p%eID=b%els(ii)
+         EXIT
+      END IF
+         
+      end do
+
+      ! If it loops through everything and doesn't yield a positive shape function,
+      ! the particle is outside the domain
+      if (p%eID.eq.0) print *, 'outside domain'
+
+      p%eID = e
       RETURN
       END FUNCTION shapeFPrt
 !--------------------------------------------------------------------
       SUBROUTINE seedPrt(prt)
       IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT), TARGET :: prt
+      CLASS(prtType), INTENT(INOUT) :: prt
       
       INTEGER ip, iDis
-      TYPE(pDisType), POINTER :: pd
+
       TYPE(pRawType) p
 
       CALL RSEED(cm%id())
-      DO iDis=1, prt%nDis
-         pd => prt%dis(iDis)
-         DO ip=1, pd%n
-            p%u    = 0D0
-            p%dID  = iDis
-            p%pID  = INT(ip,8)
-            CALL RANDOM_NUMBER(p%x(:,OLD))
-            IF (nsd .EQ. 2) p%x(3,OLD) = 0D0
-            p%x(:,OLD) = (p%x(:,OLD) - (/0.5D0,0.5D0,0D0/))*2D0
-            p%x(:,CUR) = p%x(:,OLD)
-            p%x(:,NEW) = p%x(:,OLD)
-            CALL prt%add(p)
-         END DO
+      DO ip=1, prt%n
+           p%u    = 0D0
+           p%pID  = INT(ip,8)
+           CALL RANDOM_NUMBER(p%x(:))
+           IF (nsd .EQ. 2) p%x(3) = 0D0
+           !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
+           !CALL prt%add(p)
+           prt%dat = p
       END DO
+
 
       RETURN
       END SUBROUTINE seedPrt
@@ -449,8 +501,8 @@
 !     Initializing particles
       CALL prt%new()
       prt%nDis = 1
-      ALLOCATE(prt%dis(prt%nDis))
-      prt%dis(1)%n = 5
+      !ALLOCATE(prt%dis(prt%nDis))
+      !prt%dis(1)%n = 5
       CALL prt%seed()
       CALL prt%sb%new(msh)
 
@@ -473,24 +525,33 @@
       RETURN
       END SUBROUTINE PRTTRANS
 !--------------------------------------------------------------------
-      SUBROUTINE solvePrt(prt, ns)!, Rm)
+      SUBROUTINE solvePrt(prt, ns)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT), TARGET :: prt
       CLASS(eqType), INTENT(IN) :: ns
-      ! TYPE(vecType), INTENT(OUT) :: Rm
 
       INTEGER ip, a, e, eNoN, Ac
       REAL(KIND=8) ug(3), ap(3), f(3), up(3), um, rhoF,
      2   mu, fL(3), mp, fD(3), Cd, N(4), g(3),
      3   fT(3), us(3), rhoP
-      TYPE(pDisType), POINTER :: pd
-      TYPE(pRawType), POINTER :: p
       TYPE(gVarType), POINTER :: u
       TYPE(mshType), POINTER :: lM
 
-      u => ns%var(1)
-      !u%A%v(i,Ac) ! velocity of node Ac in direction i
       lM => ns%dmn%msh(1)
+      u => ns%var(1)
+
+      IF(.NOT.prt%crtd) THEN
+            CALL prt%new(2)
+      END IF
+
+      IF (.NOT.(prt%sb%crtd)) THEN
+         CALL prt%sb%new(lM)
+      END IF
+
+
+
+      !u%A%v(i,Ac) ! velocity of node Ac in direction i
+
       !DO g=1, lM%nG
 !            IF (g.EQ.1.OR..NOT.lM%lShpF) CALL lM%dNdx(g, xl, Nx, J, ks)
 !            IF (ISZERO(J)) io%e = "Jac < 0 @ element "//e
@@ -501,52 +562,11 @@
       rhoP  = prt%mat%rho()
       mu    = ns%mat%mu()
 
-
-      !rhsRU = 0D0
-      DO ip=1, prt%n
-
-!     Particle mass
-         mp = pi/6D0*rhoP*pd%dia**3D0
-!     Particle velocity
-         up = p%u(:,CUR) + p%u(:,IMP)
-!     Actual slip velocity
-         us = up - ug
-!     Relative velocity magnitude
-         um = SQRT(us(1)*us(1) + us(2)*us(2) + us(3)*us(3))
-!     Finite Re effect
-         Cd = 1D0 + 0.15D0*(um*pd%dia*rhoF/mu)**0.687D0
-!     Drag force
-         fD = -3D0*pi*mu*pd%dia*us*Cd
-!     Particle acceleration
-         ap = fT/mp
-!     Total acceleration
-         ap = ap + g*(1D0 - rhoF/rhoP)
-!     No acceleration if particle is fixed
-         IF (pd%fixP) ap = 0D0
-!     Tracers have same velocity as fluid
-         IF (pd%tracer) THEN
-            ap         = 0D0
-            p%u(:,CUR) = ug
-            p%u(:,NEW) = ug
-         END IF
-
-!     Resetting impact function. To be set by the collisons calls
-         p%u(:,IMP) = 0D0
-      END DO
-!     Particle-particle collisions
-c      IF (prt%fwc) CALL prt%collision()
-!     And this is particle wall collision
-c      CALL prt%wallCorrect()
-!     Doing communication and updating indices associated with particle
-!     locations on the mesh
-c      CALL prt%comu()
-c      CALL prt%upInd()
-
       RETURN
       END SUBROUTINE solvePrt
       
       END MODULE PRTMOD
 
 
-! Need to fix whole prttype, then integrate all the shit into prtsolve
+
 ! prtsolve will likely use all other subroutines in readvtk

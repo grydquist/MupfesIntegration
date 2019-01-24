@@ -8,9 +8,7 @@
 !     completely filled
       INTEGER, PARAMETER :: prtExtFac = 2
 
-!!! may want to make another subtype later just called box (or use stack types) that
-!!! contains individual box's + dimensions/elementss, then sb is just the collection
-
+!     Individual box
       TYPE boxType
 !     Box dimensions (minx,maxx,miny,maxy,minz,maxz)
             REAL(KIND=8), ALLOCATABLE :: dim(:)
@@ -35,7 +33,6 @@
          PROCEDURE :: id => idSb
       END TYPE
 
-
 !     Your data type that you need to store in a Dynamic Sized Container
       TYPE pRawType
 !     Eulerian element ID that this particle belongs to
@@ -48,22 +45,21 @@
          REAL(KIND=8) u(3)
       END TYPE pRawType
 
+!     Collection of particles
       TYPE prtType
-      !        Created?
+!     Created?
          LOGICAL :: crtd = .FALSE.
-!        Maximum capacity of container
+!     Maximum capacity of container
          INTEGER :: maxN = 1024
-!        Current size
+!     Current size
          INTEGER :: n = 0
-!        Number of particle distributions (classes)
-         INTEGER :: nDis = 0
-!        Search boxes to find element hosting particles
+!     Search boxes to find element hosting particles
          TYPE(sbType) :: sb
-!        Array pointing to full and empty entries
+!     Array pointing to full and empty entries
          INTEGER, ALLOCATABLE :: ptr(:)
-!        Data
+!     Data
          TYPE(pRawType), ALLOCATABLE :: dat(:)
-!        Material properties
+!     Material properties
          TYPE(matType) :: mat
 
       CONTAINS
@@ -286,21 +282,20 @@
       do ii=1,sb%n(1)*sb%n(2)*sb%n(3)
          cnt2=1
          sbel=0
-         do jj=1,msh%Nel
+         outer: do jj=1,msh%Nel
             ! Check if elements are completely outside searchbox
-            do kk=1,nsd
+            inner: do kk=1,nsd
                ! Cycle if min value elbox .gt. max value searchbox & vice-verse
-               if (elbox(2*kk-1,jj).lt.sb%box(ii)%dim(2*kk  )) cycle
-               if (elbox(2*kk  ,jj).gt.sb%box(ii)%dim(2*kk-1)) cycle
-            end do
+               if (elbox(2*kk-1,jj).gt.sb%box(ii)%dim(2*kk  )) cycle
+               if (elbox(2*kk  ,jj).lt.sb%box(ii)%dim(2*kk-1)) cycle
+            enddo inner
 
             sbel(cnt2) = jj
             cnt2=cnt2+1
-            !end if
-         end do
+         enddo outer
          ALLOCATE(sb%box(ii)%dim(2*nsd))
-         ALLOCATE(sb%box(ii)%els(msh%nEl))
-         sb%box(ii)%els=sbel
+         ALLOCATE(sb%box(ii)%els(cnt2-1))
+         sb%box(ii)%els=sbel(1:cnt2-1)
       end do
       sb%crtd = .TRUE.
 
@@ -324,15 +319,15 @@
 
       ! Find which searchbox the particle is in
       ! Number of searchbox steps in x,y,and z
-      xsteps=FLOOR(xzero/sb%step)
+      xsteps = FLOOR(xzero/sb%step)
       ! furthest searchbox in front
-      iSb(1) = xsteps(1) + sb%n(1)*xsteps(2)+
-     2   sb%n(1)*sb%n(2)*xsteps(3)+1
+      iSb(1) = xsteps(1) + sb%n(1)*xsteps(2) +
+     2   sb%n(1)*sb%n(2)*xsteps(3) + 1
       ! previous sb in x
-      iSb(2) = iSb(1)-1
+      iSb(2) = iSb(1) - 1
       ! previous sb's in y
-      iSb(3) = iSb(1)-sb%n(1)
-      iSb(4) = iSb(3)-1
+      iSb(3) = iSb(1) - sb%n(1)
+      iSb(4) = iSb(3) - 1
       ! Next sb's in z (if available)
       if (nsd.eq.3) then
          iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
@@ -344,8 +339,7 @@
       RETURN
       END FUNCTION idSB
 !--------------------------------------------------------------------
-!     First checks to see if the particle is still in this cell,
-!     otherwise will search all the elements in the search box.
+!     Finds the element ID the particle is in. Also returns shape functions
 
       FUNCTION shapeFPrt(prt, ip, N,msh) RESULT(e)
       IMPLICIT NONE
@@ -370,12 +364,12 @@
      2   io%e = "shapeFPrt only defined for tet elements"
 
       p => prt%get(ip)
-      p%eID=0
-      iSb = prt%sb%id(p%x)
+      p%eID = 0
+      iSb= prt%sb%id(p%x)
       b => prt%sb%box(iSb(1))
 
 
-      do ii=1,msh%nEl
+      do ii=1,size(b%els)
 
       xXi = 0D0
 
@@ -444,11 +438,10 @@
       N(1) = prntx(1)
       N(2) = prntx(2)
       N(3) = prntx(3)
-      N(4) = 1 - prntx(1) - prntx(2)
-     2 - prntx(3)
+      N(4) = 1 - prntx(1) - prntx(2) - prntx(3)
 
       ! Checking if all shape functions are positive
-      IF (ALL(N.gt.0D0)) then
+      IF (ALL(N.ge.0D0)) then
          p%eID=b%els(ii)
          EXIT
       END IF
@@ -457,7 +450,7 @@
 
       ! If it loops through everything and doesn't yield a positive shape function,
       ! the particle is outside the domain
-      if (p%eID.eq.0) print *, 'outside domain'
+      if (p%eID.eq.0) io%e = 'outside domain'
 
       p%eID = e
       RETURN
@@ -500,9 +493,6 @@
       eNoN = msh%eNoN
 !     Initializing particles
       CALL prt%new()
-      prt%nDis = 1
-      !ALLOCATE(prt%dis(prt%nDis))
-      !prt%dis(1)%n = 5
       CALL prt%seed()
       CALL prt%sb%new(msh)
 

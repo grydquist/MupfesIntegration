@@ -43,6 +43,12 @@
          REAL(KIND=8) x(3)
 !     Velocity
          REAL(KIND=8) u(3)
+!     Shape functions in current element
+         REAL(KIND=8) N(4)
+!     Has this particle collided during the current time step?
+         LOGICAL :: collided = .FALSE.
+!     Remaining time in timestep after collision
+         REAL(KIND=8) :: remdt
       END TYPE pRawType
 
 !     Collection of particles
@@ -79,8 +85,12 @@
          PROCEDURE :: shapeF => shapeFPrt
 !     Seed the domai with particles
          PROCEDURE :: seed => seedPrt
+!     Finds accelereation on a particle from drag
+         PROCEDURE :: drag => dragPrt
 !     Advance all particles one time step
          PROCEDURE :: solve => solvePrt
+!     Detects and enacts collisions
+         PROCEDURE :: collide => collidePrt
       END TYPE prtType
 
       CONTAINS
@@ -341,11 +351,11 @@
 !--------------------------------------------------------------------
 !     Finds the element ID the particle is in. Also returns shape functions
 
-      FUNCTION shapeFPrt(prt, ip, N,msh) RESULT(e)
+      FUNCTION shapeFPrt(prt, ip, msh) RESULT(e)
       IMPLICIT NONE
       CLASS(prtType), INTENT(IN),TARGET :: prt
       INTEGER, INTENT(IN) :: ip
-      REAL(KIND=8), INTENT(OUT) :: N(4)
+      REAL(KIND=8) :: N(4)
       TYPE(mshType), INTENT(IN) :: msh
       INTEGER e
 
@@ -453,6 +463,7 @@
       if (p%eID.eq.0) io%e = 'outside domain'
 
       p%eID = e
+      p%N = N
       RETURN
       END FUNCTION shapeFPrt
 !--------------------------------------------------------------------
@@ -500,7 +511,7 @@
 
       DO ip=1, prt%n
          p => prt%get(ip)
-         e = prt%shapeF(ip,N,msh)
+         e = prt%shapeF(ip,msh)
          up = 0D0
          DO a=1, eNoN
             Ac = msh%IEN(a,e)
@@ -509,11 +520,174 @@
          END DO
       END DO
 
-
       call prt%free()
 
       RETURN
       END SUBROUTINE PRTTRANS
+!--------------------------------------------------------------------
+!     Gets the acceleration due to drag on a single particle
+      FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
+      CLASS(prtType), INTENT(IN), TARGET :: prt
+      INTEGER,INTENT(IN) :: ip
+      CLASS(eqType), INTENT(IN) :: ns
+      TYPE(gVarType),POINTER :: u
+      TYPE(matType), POINTER :: mat
+      TYPE(mshType), POINTER :: msh
+      REAL(KIND=8) :: apd(nsd), fvel(nsd), taup, rhoP, mu,dp
+      INTEGER :: ii, jj
+      TYPE(pRawType), POINTER :: p
+      ! Derived from flow
+      REAL(KIND=8) :: fSN, magud, Rep, relvel(nsd), rhoF
+
+      p => prt%dat(ip)
+      dp = prt%mat%D()
+      rhoP = prt%mat%rho()
+      mat => ns%mat
+      msh => ns%dmn%msh(1)
+      u => ns%var(1)
+
+!     Fluid parameters
+      rhoF = mat%rho()
+      mu  = mat%mu()
+
+!     Particle relaxation time
+      taup = rhoP*dp**2D0/mu/18D0
+
+!     Interpolate velocity at particle point
+      fvel=0D0
+      do ii=1,nsd
+         do jj=1,msh%eNoN
+            fvel(ii) = fvel(ii) + u%A%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
+         end do
+      end do
+
+      ! Relative velocity
+      relvel = fvel - p%u
+      ! Relative velocity magnitude
+      magud = SUM(relvel**2D0)**0.5D0
+      ! Reynolds Number
+      Rep = dp*magud*rhoP/mu
+      ! Schiller-Neumann (finite Re) correction
+      fSN = 1D0 + 0.15D0*Rep**0.687D0
+      ! Stokes corrected drag force
+      apD = fSN/taup*relvel
+
+      END FUNCTION dragPrt
+!--------------------------------------------------------------------
+!     Detects and enacts collisions
+      SUBROUTINE collidePrt(prt,id1,id2,dtp)
+      CLASS(prtType), INTENT(IN), TARGET :: prt
+      INTEGER, INTENT(IN) :: id1, id2
+      REAL(KIND=8), INTENT(IN) :: dtp
+      TYPE(pRawType), POINTER :: p1,p2
+
+!     Calculating distance coefficient
+      REAL(KIND=8) :: a, b, c, d, e, f, qa, qb, qc, zeros(2), tcr
+      REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd)
+      REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, mp, rho, k
+!     Coefficients to make calculating parallel/perp vel easier
+      REAL(KIND=8) :: pa, pb
+
+      p1 => prt%dat(id1)
+      p2 => prt%dat(id2)
+      dp  = prt%mat%D()
+      rho = prt%mat%rho()
+      k   = prt%mat%krest() 
+      mp = pi*rho/6D0*dp**3D0
+
+!     First, check if particles will collide at current trajectory
+      a = p1%x(1) - p2%x(1)
+      b = p1%u(1) - p2%u(1)
+      c = p1%x(2) - p2%x(2)
+      d = p1%u(2) - p2%u(2)
+      if(nsd.eq.3) then
+         e = p1%x(3) - p2%x(3)
+         f = p1%u(3) - p2%u(3)
+      else
+         e=0D0
+         f=0D0
+      end if
+      
+      qa = b**2D0 + d**2D0 + f**2D0
+      qb = 2D0*(a*b + c*d +e*f)
+      qc = a**2D0 + c**2D0 + e**2D0 - ((dp + dp)/2D0)**2D0
+
+!     Imaginary zeros means particles won't collide
+      if ((qb**2D0-4D0*qa*qc).lt.0) RETURN
+
+      ! Zeros are when the particle either enters or leaves vicinity of other particle
+      zeros(1) = (-qb + sqrt(qb**2D0-4D0*qa*qc))/(2D0*qa)
+      zeros(2) = (-qb - sqrt(qb**2D0-4D0*qa*qc))/(2D0*qa)
+
+      ! Negative zeros mean the particle would collide previously in time
+      if (ANY(zeros.le.0D0)) RETURN
+
+      tcr = minval(zeros)
+
+      ! Exit function if collision won't occur during timestep
+      if (tcr.gt.dtp) RETURN
+
+      ! particle locations at point of collision
+      p1%x = p1%u*tcr + p1%x
+      p2%x = p2%u*tcr + p2%x
+
+      ! Vector parallel and pependicular to collision tangent line
+      n1 = (p1%x - p2%x)/((dp + dp)/2)
+      n2 = -n1
+      t1 = cross2(cross2(n1,p1%u),n1)
+      t2 = cross2(cross2(n2,p2%u),n2)
+
+      ! Rare case with no perpendicular velocity
+      if (ANY(ISNAN(t1))) t1 = 0D0
+      if (ANY(ISNAN(t2))) t2 = 0D0
+      
+      ! Get precollision parallel and perpendicular velocities
+      vperp1 = sum(t1*p1%u)
+      vpar1  = sum(n1*p1%u)
+      vperp2 = sum(t2*p2%u)
+      vpar2  = sum(n2*p2%u)
+
+      ! Note that perpendicular velocities don't change, so we only need to calculate parallel
+      pa = mp*vpar1 - mp*vpar2
+      pb = (-vpar1 - vpar2)*k
+
+      vpar2 = (pa - mp*pb)/(mp + mp)
+      vpar1 = pb + vpar2
+      vpar2 = -vpar2
+
+      ! V here is split into just two velocities, so just add them as vector
+
+      p1%u = vpar1*n1 + vperp1*t1
+      p2%u = vpar2*n2 + vperp2*t2
+
+      !!! Needs to be extended for multiple collisions per time step (will probably be here)
+      ! Advance particle the rest of the time step at this velocity.
+      p1%x = p1%x + p1%u*(dtp - tcr)
+      p2%x = p2%x + p2%u*(dtp - tcr)
+
+      p1%collided = .true.
+      p2%collided = .true.
+
+      p1%remdt = dtp-tcr
+      p2%remdt = dtp-tcr
+
+      END SUBROUTINE collidePrt
+
+!--------------------------------------------------------------------
+      ! I use cross products a couple times above and didn't want to integrate the util one
+      ! Also normalizes to unit vector
+      FUNCTION cross2(v1,v2) RESULT(cross)
+      IMPLICIT NONE
+      REAL(KIND=8) :: cross(nsd)
+      REAL(KIND=8), INTENT(IN) :: v1(nsd), v2(nsd)
+
+      cross(1) = v1(2)*v2(3) - v1(3)*v2(2)
+      cross(2) = v1(3)*v2(1) - v1(1)*v2(3)
+      cross(3) = v1(1)*v2(2) - v1(2)*v2(1)
+
+      cross = cross/sqrt(cross(1)**2D0 + cross(2)**2D0 + cross(3)**2D0)
+      
+      END FUNCTION cross2
 !--------------------------------------------------------------------
       SUBROUTINE solvePrt(prt, ns)
       IMPLICIT NONE
@@ -556,7 +730,3 @@
       END SUBROUTINE solvePrt
       
       END MODULE PRTMOD
-
-
-
-! prtsolve will likely use all other subroutines in readvtk

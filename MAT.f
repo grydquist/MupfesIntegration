@@ -17,18 +17,20 @@
       IMPLICIT NONE
 
 !     The total number of properties
-      INTEGER, PARAMETER, PRIVATE :: mat_nPrp = 14
+      INTEGER, PARAMETER, PRIVATE :: mat_nPrp = 15
 
 !     The identifier for various properties
       INTEGER, PARAMETER, PRIVATE :: mat_rho = 1, mat_mu = 2, 
      2   mat_A = 3, mat_fx = 4, mat_fy = 5, mat_fz = 6, 
      3   mat_K = 7, mat_Cp = 8, mat_q = 9, mat_beta = 10, 
-     4   mat_E = 11, mat_nu = 12, mat_eta = 13, mat_D = 14
+     4   mat_E = 11, mat_nu = 12, mat_eta = 13, mat_D = 14,
+     5   mat_krest = 15
 
 !     Whether a property has lower bound of 0D0
       LOGICAL, PARAMETER, PRIVATE :: mat_lb(mat_nPrp) = (/
      2   .TRUE., .TRUE., .FALSE., .FALSE., .FALSE., .FALSE., .TRUE., 
-     3   .TRUE., .FALSE., .FALSE., .TRUE., .TRUE., .FALSE., .TRUE./)
+     3   .TRUE., .FALSE., .FALSE., .TRUE., .TRUE., .FALSE., .TRUE.,
+     4    .TRUE./)
 
 !     The name associated with each properties
       CHARACTER(LEN=*), PARAMETER, PRIVATE :: mat_name(mat_nPrp) = (/
@@ -45,7 +47,8 @@
      2   "elasticity modulus",
      3   "poisson's ratio",
      4   "damping coefficient",
-     6   "diameter"/)
+     6   "diameter",
+     7   "restitution coefficient"/)
 
 !     Abstract material class
       TYPE matType
@@ -81,6 +84,8 @@
          PROCEDURE :: eta => etaMat
 !        Diameter
          PROCEDURE :: D => DMat
+!        Restitution coefficient
+         PROCEDURE :: krest => krestMat
 !        Sets the value of a parameter provided its value and keyword
          PROCEDURE :: set => setMat
       END TYPE matType
@@ -226,6 +231,12 @@
       REAL(KIND=8) s
       s = mat%prp(mat_D)
       END FUNCTION DMat
+!---------------------------------------------------------------------
+      PURE FUNCTION krestMat(mat) RESULT(s)
+      CLASS(matType), INTENT(IN) :: mat
+      REAL(KIND=8) s
+      s = mat%prp(mat_krest)
+      END FUNCTION krestMat
 !---------------------------------------------------------------------
 !     Set properties identified by kwd to u. If successful, TRUE is
 !     returned, otherwise FALSE is returned

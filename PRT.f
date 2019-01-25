@@ -526,10 +526,11 @@
       END SUBROUTINE PRTTRANS
 !--------------------------------------------------------------------
 !     Gets the acceleration due to drag on a single particle
-      FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
+      FUNCTION dragPrt(prt, ip, ns,taupo) RESULT(apd)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER,INTENT(IN) :: ip
       CLASS(eqType), INTENT(IN) :: ns
+      REAL(KIND=8), INTENT(OUT), OPTIONAL :: taupo      
       TYPE(gVarType),POINTER :: u
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
@@ -552,6 +553,7 @@
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
+      if (present(taupo)) taupo=taup
 
 !     Interpolate velocity at particle point
       fvel=0D0
@@ -693,16 +695,28 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT), TARGET :: prt
       CLASS(eqType), INTENT(IN) :: ns
-
-      INTEGER ip, a, e, eNoN, Ac
-      REAL(KIND=8) ug(3), ap(3), f(3), up(3), um, rhoF,
-     2   mu, fL(3), mp, fD(3), Cd, N(4), g(3),
-     3   fT(3), us(3), rhoP
+      INTEGER ip, a, e, eNoN, Ac,i ,j, k
+      REAL(KIND=8) rhoF,
+     2   mu, mp,
+     3   rhoP
       TYPE(gVarType), POINTER :: u
       TYPE(mshType), POINTER :: lM
+      TYPE(pRawType), POINTER :: p(:)
+      TYPE(pRawType), ALLOCATABLE :: tmpp(:)
+!     Particle/fluid Parameters
+      REAL(KIND=8) :: g(nsd), rho, dtp,maxdtp,sbdt(nsd)
+!     Derived from flow
+      REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd), taup
+!     RK2 stuff
+      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
 
+      ALLOCATE(p(prt%n),tmpp(prt%n))
       lM => ns%dmn%msh(1)
       u => ns%var(1)
+      p => prt%dat
+      rhoF  = ns%mat%rho()
+      rhoP  = prt%mat%rho()
+      mu    = ns%mat%mu()
 
       IF(.NOT.prt%crtd) THEN
             CALL prt%new(2)
@@ -712,6 +726,32 @@
          CALL prt%sb%new(lM)
       END IF
 
+      DO i=1,prt%n
+         !CALL xSB(prts(i),sbdom,split)
+         !CALL xEl(sbdom(prts(i)%sbid(1)),prts(i),x)
+         !CALL prtAdvance(prts(i),k*vel,x)   
+      END DO
+
+      DO i=1,prt%n
+            ! Collisions
+         DO j=1,prt%n
+            ! Check if the particle collides with any other particles and hasn't collided. Advance if so.
+            IF ((i.ne.j).and.(.not.(p(i)%collided)))
+     2          CALL prt%collide(i,j,dtp)
+         ENDDO
+
+         ! If particles haven't collided, advance by vel*dtp
+         IF (.not.(p(i)%collided)) THEN
+            p(i)%x = dtp*p(i)%u + p(i)%x
+         ELSE
+            p(i)%collided = .false.
+         END IF
+
+         print *, p(i)%x,time
+      END DO
+
+
+! mpiifort -O3 -module obj -I../memLS/include -I../cplBC/include -c src/PRT.f -o obj/PRT.o
 
 
       !u%A%v(i,Ac) ! velocity of node Ac in direction i
@@ -722,9 +762,7 @@
       !      w = lM%w(g)*J
       !      N = lM%N(:,g)
       !END DO
-      rhoF  = ns%mat%rho()
-      rhoP  = prt%mat%rho()
-      mu    = ns%mat%mu()
+
 
       RETURN
       END SUBROUTINE solvePrt

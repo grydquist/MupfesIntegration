@@ -39,6 +39,8 @@
          INTEGER(KIND=8) :: eID=0
 !     Particle ID
          INTEGER(KIND=8) :: pID=0
+!     Searchbox ID
+         INTEGER(KIND=8) :: sbID(8) = 0
 !     Position
          REAL(KIND=8) x(3)
 !     Velocity
@@ -350,7 +352,6 @@
       END FUNCTION idSB
 !--------------------------------------------------------------------
 !     Finds the element ID the particle is in. Also returns shape functions
-
       FUNCTION shapeFPrt(prt, ip, msh) RESULT(e)
       IMPLICIT NONE
       CLASS(prtType), INTENT(IN),TARGET :: prt
@@ -526,11 +527,11 @@
       END SUBROUTINE PRTTRANS
 !--------------------------------------------------------------------
 !     Gets the acceleration due to drag on a single particle
-      FUNCTION dragPrt(prt, ip, ns,taupo) RESULT(apd)
+      FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER,INTENT(IN) :: ip
       CLASS(eqType), INTENT(IN) :: ns
-      REAL(KIND=8), INTENT(OUT), OPTIONAL :: taupo      
+      REAL(KIND=8) :: taupo      
       TYPE(gVarType),POINTER :: u
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
@@ -553,7 +554,6 @@
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
-      if (present(taupo)) taupo=taup
 
 !     Interpolate velocity at particle point
       fvel=0D0
@@ -695,52 +695,96 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT), TARGET :: prt
       CLASS(eqType), INTENT(IN) :: ns
-      INTEGER ip, a, e, eNoN, Ac,i ,j, k
+      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
       REAL(KIND=8) rhoF,
      2   mu, mp,
-     3   rhoP
+     3   rhoP, N(nsd+1), Ntmp(nsd+1)
       TYPE(gVarType), POINTER :: u
+      TYPE(sbType), POINTER :: sb
       TYPE(mshType), POINTER :: lM
       TYPE(pRawType), POINTER :: p(:)
-      TYPE(pRawType), ALLOCATABLE :: tmpp(:)
+      TYPE(pRawType), ALLOCATABLE :: tmpp
 !     Particle/fluid Parameters
-      REAL(KIND=8) :: g(nsd), rho, dtp,maxdtp,sbdt(nsd)
+      REAL(KIND=8) :: g(nsd), rho, dtp,maxdtp,sbdt(nsd), dp, taup
 !     Derived from flow
-      REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd), taup
+      REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
 !     RK2 stuff
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
 
-      ALLOCATE(p(prt%n),tmpp(prt%n))
+      ALLOCATE(p(prt%n))
       lM => ns%dmn%msh(1)
-      u => ns%var(1)
-      p => prt%dat
+      u =>  ns%var(1)
+      p =>  prt%dat
+      sb => prt%sb
       rhoF  = ns%mat%rho()
       rhoP  = prt%mat%rho()
       mu    = ns%mat%mu()
+      dp    = ns%mat%D()
 
+      ! Particle relaxation time
+      taup=rhop * dp**2D0/mu/18D0
+
+            ! Gravity
+!!!!! Find where grav actually is? (maybe mat%body forces)
+      g=0D0
+
+!     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
             CALL prt%new(2)
       END IF
 
-      IF (.NOT.(prt%sb%crtd)) THEN
-         CALL prt%sb%new(lM)
+      IF (.NOT.(sb%crtd)) THEN
+         CALL sb%new(lM)
       END IF
 
-      DO i=1,prt%n
-         !CALL xSB(prts(i),sbdom,split)
-         !CALL xEl(sbdom(prts(i)%sbid(1)),prts(i),x)
-         !CALL prtAdvance(prts(i),k*vel,x)   
+      
+!!!!! get time step broken down to be dictated by either fastest velocity(in terms of sb's traveled), relax time, overall solver dt
+!!! idea: do one more loop through all particles above this one and get time step for each one, then take minimum
+!!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it sb so I can only check neighboring sb's
+
+!     Appropriate time step
+      dtp = MIN(taup,dt)
+!     Subiterations
+      subit = FLOOR(dt/dtp)
+      dtp = dt/subit
+
+      DO l = 1,subit
+      DO i = 1,prt%n
+!        Find which searchbox particle is in
+         p(i)%sbID = sb%id(p(i)%x)
+!        Get shape functions/element of particle
+         N = prt%shapeF(i, lM)
+!        Get drag acceleration
+         apd = prt%drag(i,ns)
+!        Total acceleration (just drag and buoyancy now)
+         apT = apd + g*(1D0 - rhoF/rhoP)
+!        2nd order advance (Heun's Method)
+!        Predictor
+         pvelpred = p(i)%u + dtp*apT
+         prtxpred = p(i)%x + dtp*p(i)%u
+         tmpp%u   = pvelpred
+         tmpp%x   = prtxpred
+!        Find which searchbox prediction is in
+         tmpp%sbID = sb%id(tmpp%x)
+!        Get shape functions/element of prediction
+         Ntmp = prt%shapeF(i, lM)         
+!        Get drag acceleration of predicted particle
+         apdpred = prt%drag(i,ns)
+         apTpred = apdpred + g*(1D0 - rhoF/rhoP)
+!        Corrector
+         p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred)         
       END DO
 
+      !!! REALLY need to figure out how to make it so it only checks for collisions in the same searchbox
       DO i=1,prt%n
-            ! Collisions
+!        Collisions
          DO j=1,prt%n
-            ! Check if the particle collides with any other particles and hasn't collided. Advance if so.
+!        Check if the particle collides with any other particles and hasn't collided. Advance if so.
             IF ((i.ne.j).and.(.not.(p(i)%collided)))
      2          CALL prt%collide(i,j,dtp)
          ENDDO
 
-         ! If particles haven't collided, advance by vel*dtp
+!        If particles haven't collided, advance by vel*dtp
          IF (.not.(p(i)%collided)) THEN
             p(i)%x = dtp*p(i)%u + p(i)%x
          ELSE
@@ -749,20 +793,10 @@
 
          print *, p(i)%x,time
       END DO
+      END DO
 
 
 ! mpiifort -O3 -module obj -I../memLS/include -I../cplBC/include -c src/PRT.f -o obj/PRT.o
-
-
-      !u%A%v(i,Ac) ! velocity of node Ac in direction i
-
-      !DO g=1, lM%nG
-!            IF (g.EQ.1.OR..NOT.lM%lShpF) CALL lM%dNdx(g, xl, Nx, J, ks)
-!            IF (ISZERO(J)) io%e = "Jac < 0 @ element "//e
-      !      w = lM%w(g)*J
-      !      N = lM%N(:,g)
-      !END DO
-
 
       RETURN
       END SUBROUTINE solvePrt

@@ -244,7 +244,6 @@
       ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
       ALLOCATE(sbel(msh%nEl))
 
-
       ! these sequences are just for allocating sbdim
       ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
      2   ,seq3(sb%n(2)*sb%n(1)))
@@ -302,8 +301,10 @@
             ! Check if elements are completely outside searchbox
             inner: do kk=1,nsd
                ! Cycle if min value elbox .gt. max value searchbox & vice-verse
-               if (elbox(2*kk-1,jj).gt.sb%box(ii)%dim(2*kk  )) cycle
-               if (elbox(2*kk  ,jj).lt.sb%box(ii)%dim(2*kk-1)) cycle
+               if (elbox(2*kk-1,jj).gt.sb%box(ii)%dim(2*kk  ))
+     2            cycle outer
+               if (elbox(2*kk  ,jj).lt.sb%box(ii)%dim(2*kk-1))
+     2            cycle outer
             enddo inner
 
             sbel(cnt2) = jj
@@ -335,7 +336,7 @@
 
       ! Find which searchbox the particle is in
       ! Number of searchbox steps in x,y,and z
-      xsteps = FLOOR(xzero/sb%step)
+      xsteps = FLOOR(2*xzero/sb%step)
       ! furthest searchbox in front
       iSb(1) = xsteps(1) + sb%n(1)*xsteps(2) +
      2   sb%n(1)*sb%n(2)*xsteps(3) + 1
@@ -356,18 +357,16 @@
       END FUNCTION idSB
 !--------------------------------------------------------------------
 !     Finds the element ID the particle is in. Also returns shape functions
-      FUNCTION shapeFPrt(prt, ip, msh) RESULT(e)
+      FUNCTION shapeFPrt(prt, ip, msh) RESULT(N)
       IMPLICIT NONE
       CLASS(prtType), INTENT(IN),TARGET :: prt
       INTEGER, INTENT(IN) :: ip
       REAL(KIND=8) :: N(4)
       TYPE(mshType), INTENT(IN) :: msh
-      INTEGER e
 
       INTEGER, PARAMETER :: TIME_POINT=CUR, iM=1
 
       LOGICAL NOX
-      INTEGER  iSb(2**nsd)
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
       INTEGER :: ii,cnt,a
@@ -375,14 +374,25 @@
      2 Nxi(nsd,nsd+1),prntx(nsd)
       cnt=1
 
+      Nxi(1,1) =  1D0
+      Nxi(2,1) =  0D0
+      Nxi(3,1) =  0D0
+      Nxi(1,2) =  0D0
+      Nxi(2,2) =  1D0
+      Nxi(3,2) =  0D0
+      Nxi(1,3) =  0D0
+      Nxi(2,3) =  0D0
+      Nxi(3,3) =  1D0
+      Nxi(1,4) = -1D0
+      Nxi(2,4) = -1D0
+      Nxi(3,4) = -1D0
+
       IF (msh%eType.NE.eType_TET) 
      2   io%e = "shapeFPrt only defined for tet elements"
 
-      p => prt%get(ip)
+      p => prt%dat(ip)
       p%eID = 0
-      iSb= prt%sb%id(p%x)
-      b => prt%sb%box(iSb(1))
-
+      b => prt%sb%box(p%sbID(1))
 
       do ii=1,size(b%els)
 
@@ -467,7 +477,6 @@
       ! the particle is outside the domain
       if (p%eID.eq.0) io%e = 'outside domain'
 
-      p%eID = e
       p%N = N
       RETURN
       END FUNCTION shapeFPrt
@@ -519,7 +528,7 @@
 
       DO ip=1, prt%n
          p => prt%get(ip)
-         e = prt%shapeF(ip,msh)
+         !e = prt%shapeF(ip,msh)
          up = 0D0
          DO a=1, eNoN
             Ac = msh%IEN(a,e)
@@ -566,7 +575,7 @@
       fvel=0D0
       do ii=1,nsd
          do jj=1,msh%eNoN
-            fvel(ii) = fvel(ii) + u%A%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
+            fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
 
@@ -602,7 +611,6 @@
       dp  = prt%mat%D()
       rho = prt%mat%rho()
       k   = prt%mat%krest()
-      print *, k
       mp = pi*rho/6D0*dp**3D0
 
 !     First, check if particles will collide at current trajectory
@@ -707,11 +715,10 @@
       REAL(KIND=8) rhoF,
      2   mu, mp,
      3   rhoP, N(nsd+1), Ntmp(nsd+1)
-      TYPE(gVarType), POINTER :: u
       TYPE(sbType), POINTER :: sb
       TYPE(mshType), POINTER :: lM
-      TYPE(pRawType), POINTER :: p(:)
-      TYPE(pRawType), ALLOCATABLE :: tmpp
+      TYPE(pRawType), POINTER :: p(:),tp(:)
+      TYPE(prtType), TARGET :: tmpprt
 !     Particle/fluid Parameters
       REAL(KIND=8) :: g(nsd), rho, dtp,maxdtp,sbdt(nsd), dp, taup
 !     Derived from flow
@@ -723,15 +730,18 @@
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
 
+
 !     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
             CALL prt%new(2)
       END IF
-
+      CALL tmpprt%new(1)
+      
+      ALLOCATE(tp(tmpprt%n))
       ALLOCATE(p(prt%n))
       lM => ns%s%dmn%msh(1)
-      u =>  ns%s%var(1)
-      p =>  prt%dat
+      p  => prt%dat
+      tp => tmpprt%dat
       sb => prt%sb
       rhoF  = ns%s%mat%rho()
       rhoP  = prt%mat%rho()
@@ -743,6 +753,7 @@
       IF (.NOT.(sb%crtd)) THEN
          CALL sb%new(lM)
       END IF
+      tmpprt%sb = sb
 
 !!!!! get time step broken down to be dictated by either fastest velocity(in terms of sb's traveled), relax time, overall solver dt
 !!! idea: do one more loop through all particles above this one and get time step for each one, then take minimum
@@ -753,8 +764,6 @@
 !     Subiterations
       subit = FLOOR(dt/dtp)
       dtp = dt/subit
-
-      print *, taup,dt,subit! "here"
 
       DO l = 1,subit
       DO i = 1,prt%n
@@ -770,17 +779,19 @@
 !        Predictor
          pvelpred = p(i)%u + dtp*apT
          prtxpred = p(i)%x + dtp*p(i)%u
-         tmpp%u   = pvelpred
-         tmpp%x   = prtxpred
+         tp(1)%u  = pvelpred
+         tp(1)%x  = prtxpred
 !        Find which searchbox prediction is in
-         tmpp%sbID = sb%id(tmpp%x)
+         tp(1)%sbID = sb%id(tp(1)%x)
 !        Get shape functions/element of prediction
-         Ntmp = prt%shapeF(i, lM)         
+!!!!!!!!! That's not what this is doing
+         Ntmp = tmpprt%shapeF(1, lM)
 !        Get drag acceleration of predicted particle
-         apdpred = prt%drag(i,ns)
+!!!!!!!!! That's not what this is doing (might be fixed now)
+         apdpred = tmpprt%drag(1,ns)
          apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !        Corrector
-         p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred)         
+         p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred) 
       END DO
 
       !!! REALLY need to figure out how to make it so it only checks for collisions in the same searchbox
@@ -788,8 +799,9 @@
 !        Collisions
          DO j=1,prt%n
 !        Check if the particle collides with any other particles and hasn't collided. Advance if so.
-            IF ((i.ne.j).and.(.not.(p(i)%collided)))
-     2          CALL prt%collide(i,j,dtp)
+            IF ((i.ne.j).and.(.not.(p(i)%collided))) THEN
+                CALL prt%collide(i,j,dtp)
+            END IF
          ENDDO
 
 !        If particles haven't collided, advance by vel*dtp
@@ -799,7 +811,7 @@
             p(i)%collided = .false.
          END IF
 
-         print *, p(i)%x,time
+         print *, p(i)%x
       END DO
       END DO
 

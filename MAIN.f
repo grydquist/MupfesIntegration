@@ -92,6 +92,8 @@
       TYPE(matType) mat
       TYPE(lstType), POINTER :: lPtr
       TYPE(vtkType) vtmp
+!!    Temporary Grant variable
+      TYPE(prtType) prt
 !---------------------------------------------------------------------
 !     Starting the communicator
       cm = cmType()
@@ -236,6 +238,7 @@
          DO iEq=1, nEq
             CALL eq(iEq)%s%update()
          END DO
+
          cTS = cTS + 1 ! Incrementing time step
          dt  = idt ! Calculating dt
          IF (cTS .LE. nITS) dt = idt/1D1 
@@ -248,6 +251,8 @@
                DO iEq=1, nEq
                   CALL eq(iEq)%s%solve()
                   allOk = allOk .AND. eq(iEq)%s%satisfied()
+                  !        Grant temp stuff
+         CALL prt%solve(eq(1))
                END DO
                IF (allOk) EXIT
             END DO

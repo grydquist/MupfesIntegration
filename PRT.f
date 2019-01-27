@@ -1,5 +1,6 @@
       MODULE PRTMOD
       USE EQMOD
+!     FSI is using PRTMOD
       IMPLICIT NONE
       
       INTEGER, PARAMETER :: OLD=1, CUR=2, NEW=3, RHS=4, IMP=4
@@ -11,7 +12,7 @@
 !     Individual box
       TYPE boxType
 !     Box dimensions (minx,maxx,miny,maxy,minz,maxz)
-            REAL(KIND=8), ALLOCATABLE :: dim(:)
+            REAL(KIND=8) :: dim(6)
 !     Elements contained in searchbox
             INTEGER, ALLOCATABLE :: els(:)
       END TYPE
@@ -68,7 +69,7 @@
 !     Data
          TYPE(pRawType), ALLOCATABLE :: dat(:)
 !     Material properties
-         TYPE(matType) :: mat
+         TYPE(matType), POINTER :: mat
 
       CONTAINS
 !     Creates a new prt type
@@ -113,6 +114,9 @@
       DO i=1, prt%maxN
          prt%ptr(i) = i
       END DO
+      prt%n = n
+      prt%mat  => FIND_MAT('Particle')
+      CALL prt%seed()
       prt%crtd = .TRUE.
 
       RETURN
@@ -155,18 +159,18 @@
       RETURN
       END SUBROUTINE rmFPrt
 !--------------------------------------------------------------------
-      SUBROUTINE addFPrt(d,iDat)
+      SUBROUTINE addFPrt(d,iDat,ind)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT) :: d
       TYPE(pRawType), INTENT(IN) :: iDat
 
-      INTEGER ind
+      INTEGER, INTENT(IN) :: ind
 
       IF (.NOT.d%crtd) STOP "prt not created yet!"
-      IF (d%n .EQ. d%maxN) CALL d%extend()
+      !IF (d%n .EQ. d%maxN) CALL d%extend()
 
-      d%n        = d%n + 1
-      ind        = d%ptr(d%n)
+      !d%n        = d%n + 1
+      !ind        = d%ptr(d%n)
       d%dat(ind) = iDat
 
       RETURN
@@ -232,7 +236,7 @@
       IF (sb%crtd) RETURN
 
  !!     ! Will need to replace eventually with something that targets element size
-      
+
       split=(/10,10,10/)
       sb%n=split
 
@@ -305,7 +309,7 @@
             sbel(cnt2) = jj
             cnt2=cnt2+1
          enddo outer
-         ALLOCATE(sb%box(ii)%dim(2*nsd))
+         !ALLOCATE(sb%box(ii)%dim(2*nsd))
          ALLOCATE(sb%box(ii)%els(cnt2-1))
          sb%box(ii)%els=sbel(1:cnt2-1)
       end do
@@ -484,7 +488,10 @@
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            !CALL prt%add(p)
-           prt%dat = p
+           p%x(1) = 0D0
+           p%x(2) = 0D0
+           p%x(3) = 10D0/ip
+           prt%dat(ip) = p
       END DO
 
 
@@ -530,7 +537,7 @@
       FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER,INTENT(IN) :: ip
-      CLASS(eqType), INTENT(IN) :: ns
+      CLASS(ceqType), INTENT(IN) :: ns
       REAL(KIND=8) :: taupo      
       TYPE(gVarType),POINTER :: u
       TYPE(matType), POINTER :: mat
@@ -544,9 +551,9 @@
       p => prt%dat(ip)
       dp = prt%mat%D()
       rhoP = prt%mat%rho()
-      mat => ns%mat
-      msh => ns%dmn%msh(1)
-      u => ns%var(1)
+      mat => ns%s%mat
+      msh => ns%s%dmn%msh(1)
+      u => ns%s%var(1)
 
 !     Fluid parameters
       rhoF = mat%rho()
@@ -594,7 +601,8 @@
       p2 => prt%dat(id2)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
-      k   = prt%mat%krest() 
+      k   = prt%mat%krest()
+      print *, k
       mp = pi*rho/6D0*dp**3D0
 
 !     First, check if particles will collide at current trajectory
@@ -694,7 +702,7 @@
       SUBROUTINE solvePrt(prt, ns)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT), TARGET :: prt
-      CLASS(eqType), INTENT(IN) :: ns
+      CLASS(ceqType), INTENT(IN) :: ns
       INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
       REAL(KIND=8) rhoF,
      2   mu, mp,
@@ -711,20 +719,7 @@
 !     RK2 stuff
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
 
-      ALLOCATE(p(prt%n))
-      lM => ns%dmn%msh(1)
-      u =>  ns%var(1)
-      p =>  prt%dat
-      sb => prt%sb
-      rhoF  = ns%mat%rho()
-      rhoP  = prt%mat%rho()
-      mu    = ns%mat%mu()
-      dp    = ns%mat%D()
-
-      ! Particle relaxation time
-      taup=rhop * dp**2D0/mu/18D0
-
-            ! Gravity
+!     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
 
@@ -733,11 +728,22 @@
             CALL prt%new(2)
       END IF
 
+      ALLOCATE(p(prt%n))
+      lM => ns%s%dmn%msh(1)
+      u =>  ns%s%var(1)
+      p =>  prt%dat
+      sb => prt%sb
+      rhoF  = ns%s%mat%rho()
+      rhoP  = prt%mat%rho()
+      mu    = ns%s%mat%mu()
+      dp    = prt%mat%D()
+!     Particle relaxation time
+      taup = rhoP*dp**2D0/mu/18D0
+
       IF (.NOT.(sb%crtd)) THEN
          CALL sb%new(lM)
       END IF
 
-      
 !!!!! get time step broken down to be dictated by either fastest velocity(in terms of sb's traveled), relax time, overall solver dt
 !!! idea: do one more loop through all particles above this one and get time step for each one, then take minimum
 !!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it sb so I can only check neighboring sb's
@@ -747,6 +753,8 @@
 !     Subiterations
       subit = FLOOR(dt/dtp)
       dtp = dt/subit
+
+      print *, taup,dt,subit! "here"
 
       DO l = 1,subit
       DO i = 1,prt%n

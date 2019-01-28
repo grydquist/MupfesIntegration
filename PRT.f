@@ -253,15 +253,15 @@
       diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
       diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
       ! Size of sb
-      sb%step=diff/((split+1)/2)
+      sb%step=diff/((sb%n+1)/2)
 
-      seq1=(/(ii, ii=0, split(2)*split(3)-1, 1)/)*split(1)+1
+      seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
-      do ii=1,split(1)*split(3)
-            seq2(ii)=ii+cnt2*(split(2)-1)*split(1)
-            if (MOD(ii,split(1)).eq.0) cnt2=cnt2+1
+      do ii=1,sb%n(1)*sb%n(3)
+            seq2(ii)=ii+cnt2*(sb%n(2)-1)*sb%n(1)
+            if (MOD(ii,sb%n(1)).eq.0) cnt2=cnt2+1
       end do
-      seq3=(/(ii, ii=0, split(1)*split(2)-1, 1)/)+1
+      seq3=(/(ii, ii=0, sb%n(1)*sb%n(2)-1, 1)/)+1
 
       ! Allocating sb, such that they overlap by 50%
       ! Direction 1
@@ -272,13 +272,13 @@
 
       ! Direction 2
       do ii=1,sb%n(2)
-         sb%box(seq2+(ii-1)*split(1))%dim(3) = MINVAL(msh%x(2,:))
+         sb%box(seq2+(ii-1)*sb%n(1))%dim(3) = MINVAL(msh%x(2,:))
      2       + sb%step(2)*(ii-1)/2
       end do
 
       ! Direction 3
       do ii=1,sb%n(3)
-         sb%box(seq3+(ii-1)*split(1)*split(2))%dim(5)=
+         sb%box(seq3+(ii-1)*sb%n(1)*sb%n(2))%dim(5)=
      2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2
       end do
 

@@ -244,20 +244,20 @@
       INTEGER :: ii,jj,cnt2,kk,ll
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
       REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl)
-      INTEGER, ALLOCATABLE :: sbel(:),sbelf(:,:)
+      INTEGER, ALLOCATABLE :: sbel(:),sbelf(:)
       INTEGER :: split(nsd)
       IF (sb%crtd) RETURN
 
  !!     ! Will need to replace eventually with something that targets element size
 
-      split=(/10,10,10/)
+      split=(/3,3,5/)
       sb%n=split
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
       ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
       ALLOCATE(sbel(msh%nEl))
       ALLOCATE(facels(msh%nFa))
-      ALLOCATE(sbelf(msh%nFa,MAXVAL(msh%fa(:)%nEl)))
+      ALLOCATE(sbelf(MAXVAL(msh%fa(:)%nEl)))
 
       ! these sequences are just for allocating sbdim
       ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
@@ -345,13 +345,12 @@
          sb%box(ii)%els=sbel(1:cnt2-1)
 
 !        Now check face elements
-         cnt2  = 1
-         sbelf = 0
 !        Loop over faces
          outer2: do jj = 1,msh%nFa
+         sbelf = 0
+         cnt2  = 1
             middle: do kk = 1,msh%fa(jj)%nEl
                   inner2: do ll = 1,nsd
-
 !                 Check if face elements are completely outside searchboxes
                   IF (MAXVAL(facels(jj)%elbox(2*ll  ,:)).lt.
      2            sb%box(ii)%dim(2*ll-1)) cycle outer2
@@ -361,19 +360,17 @@
 
 !                 Cycle if min value facels .gt. max value searchbox & vice-verse
                   if (facels(jj)%elbox(2*ll-1,kk).gt.
-     2                  sb%box(ii)%dim(2*ll  )) cycle inner2
+     2                  sb%box(ii)%dim(2*ll  )) cycle middle
                   if (facels(jj)%elbox(2*ll  ,kk).lt.
-     2                  sb%box(ii)%dim(2*ll-1)) cycle inner2
+     2                  sb%box(ii)%dim(2*ll-1)) cycle middle
                   enddo inner2
 
-                  sbelf(jj,cnt2) = kk
+                  sbelf(cnt2) = kk
                   cnt2 = cnt2 + 1
-                  print *, kk
             enddo middle
             ALLOCATE(sb%box(ii)%fa(jj)%els(cnt2-1))
-            sb%box(ii)%fa(jj)%els = sbelf(jj,1:cnt2-1)
+            sb%box(ii)%fa(jj)%els = sbelf(1:cnt2-1)
          enddo outer2
-         print *, ii, shape(sb%box(ii)%fa(jj-2)%els), msh%nEl
       end do
       sb%crtd = .TRUE.
 

@@ -51,7 +51,7 @@
 !     Eulerian element ID that this particle belongs to
          INTEGER(KIND=8) :: eID=0
 !     Previous element ID
-         INTEGER(KIND=8) :: eIDo=0
+         INTEGER(KIND=8) :: eIDo=1
 !     Particle ID
          INTEGER(KIND=8) :: pID=0
 !     Searchbox ID
@@ -61,9 +61,13 @@
 !     Velocity
          REAL(KIND=8) u(3)
 !     Previous Position
-         REAL(KIND=8) xo(3)
+         REAL(KIND=8) :: xo(3) = 0D0
 !     Previous Velocity
-         REAL(KIND=8) uo(3)
+         REAL(KIND=8) :: uo(3) = 0D0
+!     Position at collision
+         REAL(KIND=8) :: xc(3) = 0D0
+!     Velocity at collision
+         REAL(KIND=8) :: uc(3) = 0D0
 !     Shape functions in current element
          REAL(KIND=8) N(4)
 !     Has this particle collided during the current time step?
@@ -532,6 +536,7 @@
       ! Checking if all shape functions are positive
       IF (ALL(N.ge.0D0)) then
          p%eID=b%els(ii)
+         p%N = N
          EXIT
       END IF
          
@@ -541,7 +546,6 @@
       ! the particle is outside the domain
       if (p%eID.eq.0) io%e = 'outside domain'
 
-      p%N = N
       RETURN
       END FUNCTION shapeFPrt
 !--------------------------------------------------------------------
@@ -657,8 +661,9 @@
       END FUNCTION dragPrt
 !--------------------------------------------------------------------
 !     Detects and enacts collisions
-      SUBROUTINE collidePrt(prt,id1,id2,dtp)
+      SUBROUTINE collidePrt(prt,id1,id2,dtp,lM)
       CLASS(prtType), INTENT(IN), TARGET :: prt
+      CLASS(mshType), INTENT(IN) :: lM
       INTEGER, INTENT(IN) :: id1, id2
       REAL(KIND=8), INTENT(IN) :: dtp
       TYPE(pRawType), POINTER :: p1,p2
@@ -668,7 +673,7 @@
       REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd)
       REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, mp, rho, k
 !     Coefficients to make calculating parallel/perp vel easier
-      REAL(KIND=8) :: pa, pb
+      REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1)
 
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
@@ -710,11 +715,11 @@
       if (tcr.gt.dtp) RETURN
 
       ! particle locations at point of collision
-      p1%x = p1%u*tcr + p1%x
-      p2%x = p2%u*tcr + p2%x
+      p1%xc = p1%u*tcr + p1%x
+      p2%xc = p2%u*tcr + p2%x
 
       ! Vector parallel and pependicular to collision tangent line
-      n1 = (p1%x - p2%x)/((dp + dp)/2)
+      n1 = (p1%xc - p2%xc)/((dp + dp)/2)
       n2 = -n1
       t1 = cross2(cross2(n1,p1%u),n1)
       t2 = cross2(cross2(n2,p2%u),n2)
@@ -741,11 +746,15 @@
 
       p1%u = vpar1*n1 + vperp1*t1
       p2%u = vpar2*n2 + vperp2*t2
+            
+      ! particle velocities at point of collision
+      p1%uc = p1%u
+      p2%uc = p2%u
 
       !!! Needs to be extended for multiple collisions per time step (will probably be here)
       ! Advance particle the rest of the time step at this velocity.
-      p1%x = p1%x + p1%u*(dtp - tcr)
-      p2%x = p2%x + p2%u*(dtp - tcr)
+      p1%x = p1%xc + p1%u*(dtp - tcr)
+      p2%x = p2%xc + p2%u*(dtp - tcr)
 
       p1%collided = .true.
       p2%collided = .true.
@@ -753,20 +762,42 @@
       p1%remdt = dtp-tcr
       p2%remdt = dtp-tcr
 
+!     Find which searchbox particles are in
+      p1%sbID = prt%sb%id(p1%x)
+!     Find which searchbox particles are in
+      p2%sbID = prt%sb%id(p1%x)
+!     Get shape functions/element of particle
+      Np1 = prt%shapeF(1, lM)
+      Np2 = prt%shapeF(2, lM)
+      !IF ANY(N1.lt.0)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p1 
+      !IF ANY(N2.lt.0)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p2 
+
       END SUBROUTINE collidePrt
 !--------------------------------------------------------------------
       SUBROUTINE wallPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
       TYPE(pRawType), POINTER :: p
+      REAL(KIND=8) :: dp, mp, rho, k
 
-      p  => prt%dat(idp)
+      p   =>prt%dat(idp)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
       k   = prt%mat%krest()
       !mp = pi*rho/6D0*dp**3D0
 
+      ! First, if collided, check if collision was out of domain w/ sbID,shapeF
+      ! If not, go back to xco, uco, find element it collides with
+      ! If so, go back to xo, uo
+      ! Get collision velocities/positions
+      ! advance remaining time step
+      ! For above, do the same if not collided, just go back to xo,uo
+      ! maybe don't use uo, but use velocity you used to translate?
+      ! At the end, set sbID = 0 so it finds it next time around
 
+      END SUBROUTINE wallPrt
 
 !--------------------------------------------------------------------
       ! I use cross products a couple times above and didn't want to integrate the util one
@@ -809,7 +840,7 @@
 
 !     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
-            CALL prt%new(2)
+            CALL prt%new(1)
       END IF
       CALL tmpprt%new(1)
       
@@ -843,10 +874,19 @@
 
       DO l = 1,subit
       DO i = 1,prt%n
+!     Old velocity and position and eID
+      p(i)%xo = p(i)%x
+      p(i)%uo = p(i)%u
+      p(i)%eIDo = p(i)%eID
+
+!     If particles haven't exited domain (or it's the first iter) their sbID is known
+      IF (p(i)%sbID(1) .eq. 0) THEN
 !        Find which searchbox particle is in
          p(i)%sbID = sb%id(p(i)%x)
 !        Get shape functions/element of particle
          N = prt%shapeF(i, lM)
+      END IF
+
 !        Get drag acceleration
          apd = prt%drag(i,ns)
 !        Total acceleration (just drag and buoyancy now)
@@ -855,7 +895,7 @@
 !        Predictor
          pvelpred = p(i)%u + dtp*apT
          prtxpred = p(i)%x + dtp*p(i)%u
-         tp(1)%u  = pvelpred
+         tp(1)%u  = pvelpred 
          tp(1)%x  = prtxpred
 !        Find which searchbox prediction is in
          tp(1)%sbID = sb%id(tp(1)%x)
@@ -874,23 +914,29 @@
          DO j=1,prt%n
 !        Check if the particle collides with any other particles and hasn't collided. Advance if so.
             IF ((i.ne.j).and.(.not.(p(i)%collided))) THEN
-                CALL prt%collide(i,j,dtp)
+                CALL prt%collide(i,j,dtp,lM)
             END IF
          ENDDO
 
 !        If particles haven't collided, advance by vel*dtp
          IF (.not.(p(i)%collided)) THEN
             p(i)%x = dtp*p(i)%u + p(i)%x
-         ELSE
-            p(i)%collided = .false.
+!           Check if particles are still in domain
+!!!!!! Use previous element id here eventually
+!           Find which searchbox particle is in
+            p(i)%sbID = sb%id(p(i)%x)
+!           Get shape functions/element of particle
+            N = prt%shapeF(i, lM)
+            !IF ANY(N.lt.0)
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt 
          END IF
+
+!        Reset if particles have collided
+         p(i)%collided = .false.
 
          print *, p(i)%x
       END DO
       END DO
-
-
-! mpiifort -O3 -module obj -I../memLS/include -I../cplBC/include -c src/PRT.f -o obj/PRT.o
 
       RETURN
       END SUBROUTINE solvePrt

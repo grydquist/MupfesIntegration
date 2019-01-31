@@ -50,6 +50,8 @@
       TYPE pRawType
 !     Eulerian element ID that this particle belongs to
          INTEGER(KIND=8) :: eID=0
+!     Previous element ID
+         INTEGER(KIND=8) :: eIDo=0
 !     Particle ID
          INTEGER(KIND=8) :: pID=0
 !     Searchbox ID
@@ -58,6 +60,10 @@
          REAL(KIND=8) x(3)
 !     Velocity
          REAL(KIND=8) u(3)
+!     Previous Position
+         REAL(KIND=8) xo(3)
+!     Previous Velocity
+         REAL(KIND=8) uo(3)
 !     Shape functions in current element
          REAL(KIND=8) N(4)
 !     Has this particle collided during the current time step?
@@ -557,7 +563,7 @@
            !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 10D0/ip
+           p%x(3) = 3D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -748,6 +754,19 @@
       p2%remdt = dtp-tcr
 
       END SUBROUTINE collidePrt
+!--------------------------------------------------------------------
+      SUBROUTINE wallPrt(prt, idp)
+      CLASS(prtType), INTENT(IN), TARGET :: prt
+      INTEGER, INTENT(IN) :: idp
+      TYPE(pRawType), POINTER :: p
+
+      p  => prt%dat(idp)
+      dp  = prt%mat%D()
+      rho = prt%mat%rho()
+      k   = prt%mat%krest()
+      !mp = pi*rho/6D0*dp**3D0
+
+
 
 !--------------------------------------------------------------------
       ! I use cross products a couple times above and didn't want to integrate the util one
@@ -841,10 +860,8 @@
 !        Find which searchbox prediction is in
          tp(1)%sbID = sb%id(tp(1)%x)
 !        Get shape functions/element of prediction
-!!!!!!!!! That's not what this is doing
          Ntmp = tmpprt%shapeF(1, lM)
 !        Get drag acceleration of predicted particle
-!!!!!!!!! That's not what this is doing (might be fixed now)
          apdpred = tmpprt%drag(1,ns)
          apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !        Corrector
@@ -879,3 +896,8 @@
       END SUBROUTINE solvePrt
       
       END MODULE PRTMOD
+
+
+      !!!! Urgent fixes after wall:
+      !!!! Add in so it only checks in same searchbox
+      !!!! Add in so, to find element particle is in, it checks first element from last time

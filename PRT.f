@@ -25,7 +25,7 @@
             REAL(KIND=8) :: dim(6)
 !     Elements contained in searchbox
             INTEGER, ALLOCATABLE :: els(:)
-!     Face elements in searchbox
+!     Face elements in searchbox (face and element)
             TYPE(facelsType), ALLOCATABLE :: fa(:)
       END TYPE
 
@@ -56,6 +56,10 @@
          INTEGER(KIND=8) :: pID=0
 !     Searchbox ID
          INTEGER(KIND=8) :: sbID(8) = 0
+!     Previous sbID
+         INTEGER(KIND=8) :: sbIDo(8) = 0
+!     Crossed face ID
+         INTEGER(KIND=8) :: faID(2) = 0
 !     Position
          REAL(KIND=8) x(3)
 !     Velocity
@@ -769,17 +773,100 @@
 !     Get shape functions/element of particle
       Np1 = prt%shapeF(1, lM)
       Np2 = prt%shapeF(2, lM)
-      !IF ANY(N1.lt.0)
+      !IF ANY(Np1.lt.0)
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p1 
-      !IF ANY(N2.lt.0)
+      !IF ANY(Np2.lt.0)
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p2 
 
       END SUBROUTINE collidePrt
+!--------------------------------------------------------------------
+      SUBROUTINE findwlPrt(prt,idp,msh)
+      CLASS(prtType), INTENT(IN), TARGET :: prt
+      INTEGER, INTENT(IN) :: idp
+      CLASS(mshType), INTENT(IN) :: msh
+      TYPE(pRawType), POINTER :: p
+      TYPE(boxType),  POINTER :: b
+      REAL(KIND=8) :: Jac, xXi(nsd,nsd), xiX(nsd,nsd), Nxi(nsd,nsd)
+      REAL(KIND=8) :: prntx(nsd-1), N(nsd), ti
+      INTEGER :: ii, jj, a
+
+      p => prt%dat(idp)
+      b => prt%sb%box(p%sbID(1))
+
+      Nxi(1,1) =  1D0
+      Nxi(2,1) =  0D0
+      Nxi(1,2) =  0D0
+      Nxi(2,2) =  1D0
+      Nxi(1,3) = -1D0
+      Nxi(2,3) = -1D0
+      p%faID = 0
+
+      faceloop: DO ii=1,msh%nFa
+      DO jj=1,size(b%fa)
+
+            xXi = 0D0
+      !     Setting up matrix for inversion
+            DO a=1, msh%eNoN-1
+                  xXi(:,1) = xXi(:,1) +
+     2        msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))*Nxi(1,a)
+                  xXi(:,2) = xXi(:,2) +
+     2        msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))*Nxi(2,a)
+            ENDDO
+            xXi(:,3) = -p%u
+
+                  ! Inverting matrix
+            Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
+     2       + xXi(1,2)*xXi(2,3)*xXi(3,1)
+     3       + xXi(1,3)*xXi(2,1)*xXi(3,2)
+     4       - xXi(1,1)*xXi(2,3)*xXi(3,2)
+     5       - xXi(1,2)*xXi(2,1)*xXi(3,3)
+     6       - xXi(1,3)*xXi(2,2)*xXi(3,1)
+    
+            xiX(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))/Jac
+            xiX(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))/Jac
+            xiX(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))/Jac
+            xiX(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))/Jac
+            xiX(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))/Jac
+            xiX(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))/Jac
+            xiX(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))/Jac
+            xiX(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))/Jac
+            xiX(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))/Jac
+
+            DO a=1, nsd
+            prntx(a) = xiX(a,1)*(p%x(1) -
+     2       msh%x(1,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
+     3               + xiX(a,2)*(p%x(2) -
+     4       msh%x(2,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
+     5               + xiX(a,3)*(p%x(3) -
+     6       msh%x(3,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
+            END DO
+
+            N(1) = prntx(1)
+            N(2) = prntx(2)
+            N(3) = 1 - prntx(1) - prntx(2)
+
+            IF (ALL(N.gt.0D0)) THEN
+                  p%faID(1) = ii
+                  p%faID(2) = jj
+                  ti = prntx(3)
+                  EXIT faceloop
+            ENDIF
+
+            IF (p%faID(1).eq.0) io%e = "Wrong searchbox" 
+
+
+      ENDDO
+      ENDDO faceloop
+      
+
+
+      END SUBROUTINE findwlPrt
 !--------------------------------------------------------------------
       SUBROUTINE wallPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
       TYPE(pRawType), POINTER :: p
+      INTEGER ii
       REAL(KIND=8) :: dp, mp, rho, k
 
       p   =>prt%dat(idp)
@@ -788,6 +875,20 @@
       k   = prt%mat%krest()
       !mp = pi*rho/6D0*dp**3D0
 
+      DO ii=1,size(prt%sb%box(p%sbIDo(1))%fa)
+
+!     For particles that haven't collided
+      IF (.not.p%collided) THEN
+
+
+      ELSE
+
+      ENDIF
+
+
+      ENDDO
+
+      
       ! First, if collided, check if collision was out of domain w/ sbID,shapeF
       ! If not, go back to xco, uco, find element it collides with
       ! If so, go back to xo, uo
@@ -878,6 +979,7 @@
       p(i)%xo = p(i)%x
       p(i)%uo = p(i)%u
       p(i)%eIDo = p(i)%eID
+      p(i)%sbIDo= p(i)%sbID
 
 !     If particles haven't exited domain (or it's the first iter) their sbID is known
       IF (p(i)%sbID(1) .eq. 0) THEN
@@ -901,6 +1003,8 @@
          tp(1)%sbID = sb%id(tp(1)%x)
 !        Get shape functions/element of prediction
          Ntmp = tmpprt%shapeF(1, lM)
+
+!!! check if outside domain
 !        Get drag acceleration of predicted particle
          apdpred = tmpprt%drag(1,ns)
          apTpred = apdpred + g*(1D0 - rhoF/rhoP)

@@ -120,6 +120,8 @@
          PROCEDURE :: solve => solvePrt
 !     Detects and enacts collisions
          PROCEDURE :: collide => collidePrt
+!     Finds which wall element the partice collides with
+         PROCEDURE :: findwl => findwlPrt
       END TYPE prtType
 
       CONTAINS
@@ -264,7 +266,7 @@
 
  !!     ! Will need to replace eventually with something that targets element size
 
-      split=(/3,3,5/)
+      split=(/2,2,2/)
       sb%n=split
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
@@ -571,7 +573,7 @@
            !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 3D0/ip
+           p%x(3) = 1.01D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -650,6 +652,8 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
+      fvel = 0
+      fvel(3) = -3D0
 
       ! Relative velocity
       relvel = fvel - p%u
@@ -787,7 +791,7 @@
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
       REAL(KIND=8) :: Jac, xXi(nsd,nsd), xiX(nsd,nsd), Nxi(nsd,nsd)
-      REAL(KIND=8) :: prntx(nsd-1), N(nsd), ti
+      REAL(KIND=8) :: prntx(nsd), N(nsd), ti
       INTEGER :: ii, jj, a
 
       p => prt%dat(idp)
@@ -802,7 +806,7 @@
       p%faID = 0
 
       faceloop: DO ii=1,msh%nFa
-      DO jj=1,size(b%fa)
+      DO jj=1,size(b%fa(ii)%els)
 
             xXi = 0D0
       !     Setting up matrix for inversion
@@ -845,21 +849,17 @@
             N(2) = prntx(2)
             N(3) = 1 - prntx(1) - prntx(2)
 
-            IF (ALL(N.gt.0D0)) THEN
+            IF (ALL(N.ge.0D0).and. prntx(3).gt.0) THEN
                   p%faID(1) = ii
                   p%faID(2) = jj
                   ti = prntx(3)
                   EXIT faceloop
             ENDIF
 
-            IF (p%faID(1).eq.0) io%e = "Wrong searchbox" 
-
-
       ENDDO
       ENDDO faceloop
+      !io%e = "Wrong searchbox"
       
-
-
       END SUBROUTINE findwlPrt
 !--------------------------------------------------------------------
       SUBROUTINE wallPrt(prt, idp)
@@ -1009,7 +1009,8 @@
          apdpred = tmpprt%drag(1,ns)
          apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !        Corrector
-         p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred) 
+         p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred)
+      call prt%findwl(i,lM)
       END DO
 
       !!! REALLY need to figure out how to make it so it only checks for collisions in the same searchbox

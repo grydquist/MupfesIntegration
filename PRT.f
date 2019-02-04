@@ -684,7 +684,7 @@
 
 !     Calculating distance coefficient
       REAL(KIND=8) :: a, b, c, d, e, f, qa, qb, qc, zeros(2), tcr
-      REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd)
+      REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd),temp(nsd)
       REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, mp, rho, k
 !     Coefficients to make calculating parallel/perp vel easier
       REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1)
@@ -735,8 +735,10 @@
       ! Vector parallel and pependicular to collision tangent line
       n1 = (p1%xc - p2%xc)/((dp + dp)/2)
       n2 = -n1
-      t1 = cross2(cross2(n1,p1%u),n1)
-      t2 = cross2(cross2(n2,p2%u),n2)
+      temp = cross2(n1,p1%u)
+      t1 = cross2(temp,n1)
+      temp = cross2(n2,p2%u)
+      t2 = cross2(temp,n2)
 
       ! Rare case with no perpendicular velocity
       if (ANY(ISNAN(t1))) t1 = 0D0
@@ -860,7 +862,6 @@
                   p%faID(1) = ii
                   p%faID(2) = jj
                   p%ti = prntx(3)
-                  print *, p%ti
             IF (p%ti .lt.7D0) CALL prt%wall(idp,msh)
                   EXIT faceloop
             ENDIF
@@ -878,9 +879,9 @@
       TYPE(pRawType), POINTER :: p
       INTEGER :: ii
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
-     2 a(nsd), b(nsd), vpar, vperp
+     2 a(nsd), b(nsd), vpar, vperp, temp(nsd)
 
-      print *, 1
+      CALL prt%findwl(idp,msh)
       p   =>prt%dat(idp)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
@@ -891,14 +892,14 @@
       b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
      2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
       nV = CROSS2(a,b)
-      tV = CROSS2(CROSS2(nV,p%u),nV)
+      temp = CROSS2(nV,p%u)
+      tV = CROSS2(temp,nV)
 ! Rare case with no perpendicular velocity
       IF (ANY(ISNAN(tV))) tV = 0D0
-      print *, nV
       
       vperp = sum(tV*p%u)
       vpar  = sum(nV*p%u)*k
-      print *, vpar, vperp
+
 !     Advance to collision location
       p%xc = p%u*p%ti + p%x
       p%remdt = prt%dt - p%ti
@@ -949,6 +950,66 @@
       
       END FUNCTION cross2
 !--------------------------------------------------------------------
+      SUBROUTINE advPrt(prt, idp, ns,dt)
+      CLASS(prtType), INTENT(IN), TARGET :: prt
+      INTEGER, INTENT(IN) :: idp
+      CLASS(ceqType), INTENT(IN) :: ns
+      REAL(KIND=8), INTENT(IN) :: dt
+      TYPE(matType), POINTER :: mat
+      TYPE(mshType), POINTER :: msh
+      TYPE(pRawType), POINTER :: p, tp(:)
+      TYPE(prtType), TARGET :: tmpprt
+      TYPE(sbType), POINTER :: sb
+      REAL(KIND=8) rhoF,
+     2   mu, mp, g,
+     3   rhoP, N(nsd+1), Ntmp(nsd+1)
+      REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
+      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
+
+!     Gravity
+!!!!! Find where grav actually is? (maybe mat%body forces)
+      g=0D0
+
+      mat => ns%s%mat
+      msh => ns%s%dmn%msh(1)
+      p  => prt%dat(idp)
+      sb => prt%sb
+      tp => tmpprt%dat
+      tmpprt%sb = sb
+
+      p%xo = p%x
+      p%uo = p%u
+      p%eIDo = p%eID
+      p%sbIDo= p%sbID
+
+!     Find which searchbox particle is in
+      p%sbID = sb%id(p%x)
+!     Get shape functions/element of particle
+      N = prt%shapeF(idp, msh)
+
+!     Get drag acceleration
+      apd = prt%drag(idp,ns)
+!     Total acceleration (just drag and buoyancy now)
+      apT = apd + g*(1D0 - rhoF/rhoP)
+!     2nd order advance (Heun's Method)
+!     Predictor
+      pvelpred = p%u + dt*apT
+      prtxpred = p%x + dt*p%u
+      tp(1)%u  = pvelpred 
+      tp(1)%x  = prtxpred
+!     Find which searchbox prediction is in
+      tp(1)%sbID = sb%id(tp(1)%x)
+!     Get shape functions/element of prediction
+      Ntmp = tmpprt%shapeF(1, msh)
+!     Get drag acceleration of predicted particle
+      apdpred = tmpprt%drag(1,ns)
+      apTpred = apdpred + g*(1D0 - rhoF/rhoP)
+!     Corrector
+      p%u = p%u + 0.5D0*dt*(apT+apTpred)
+      p%x = dt*p%u + p%x
+
+      END SUBROUTINE advPrt
+!--------------------------------------------------------------------
       SUBROUTINE solvePrt(prt, ns)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT), TARGET :: prt
@@ -962,7 +1023,7 @@
       TYPE(pRawType), POINTER :: p(:),tp(:)
       TYPE(prtType), TARGET :: tmpprt
 !     Particle/fluid Parameters
-      REAL(KIND=8) :: g(nsd), rho, dtp,maxdtp,sbdt(nsd), dp, taup
+      REAL(KIND=8) :: g(nsd), dtp,maxdtp,sbdt(nsd), dp, taup
 !     Derived from flow
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
 !     RK2 stuff
@@ -1037,11 +1098,11 @@
          tp(1)%sbID = sb%id(tp(1)%x)
 !        Get shape functions/element of prediction
          Ntmp = tmpprt%shapeF(1, lM)
-
 !!! check if outside domain
 !        Get drag acceleration of predicted particle
          apdpred = tmpprt%drag(1,ns)
          apTpred = apdpred + g*(1D0 - rhoF/rhoP)
+         !IF (ANY(Ntmp.lt.))
 !        Corrector
          p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred)
       call prt%findwl(i,lM)

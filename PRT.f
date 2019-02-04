@@ -88,6 +88,8 @@
          INTEGER :: maxN = 1024
 !     Current size
          INTEGER :: n = 0
+!     Current timestep
+         REAL(KIND=8) :: dt = 0D0
 !     Search boxes to find element hosting particles
          TYPE(sbType) :: sb
 !     Array pointing to full and empty entries
@@ -849,10 +851,12 @@
             N(2) = prntx(2)
             N(3) = 1 - prntx(1) - prntx(2)
 
-            IF (ALL(N.ge.0D0).and. prntx(3).gt.0) THEN
+            IF (ALL(N.ge.0D0).and. prntx(3).gt.0
+     2      .and. prntx(3).lt.prt%dt) THEN
                   p%faID(1) = ii
                   p%faID(2) = jj
                   ti = prntx(3)
+                  print *, ti*p%u+p%x
                   EXIT faceloop
             ENDIF
 
@@ -972,6 +976,7 @@
 !     Subiterations
       subit = FLOOR(dt/dtp)
       dtp = dt/subit
+      prt%dt = dtp
 
       DO l = 1,subit
       DO i = 1,prt%n

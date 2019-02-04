@@ -78,6 +78,8 @@
          LOGICAL :: collided = .FALSE.
 !     Remaining time in timestep after collision
          REAL(KIND=8) :: remdt
+!     Time until collision
+         REAL(KIND=8) :: ti
       END TYPE pRawType
 
 !     Collection of particles
@@ -124,6 +126,8 @@
          PROCEDURE :: collide => collidePrt
 !     Finds which wall element the partice collides with
          PROCEDURE :: findwl => findwlPrt
+!     Enacts collisions with walls
+         PROCEDURE :: wall => wallPrt
       END TYPE prtType
 
       CONTAINS
@@ -793,7 +797,7 @@
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
       REAL(KIND=8) :: Jac, xXi(nsd,nsd), xiX(nsd,nsd), Nxi(nsd,nsd)
-      REAL(KIND=8) :: prntx(nsd), N(nsd), ti
+      REAL(KIND=8) :: prntx(nsd), N(nsd)
       INTEGER :: ii, jj, a
 
       p => prt%dat(idp)
@@ -851,12 +855,13 @@
             N(2) = prntx(2)
             N(3) = 1 - prntx(1) - prntx(2)
 
-            IF (ALL(N.ge.0D0).and. prntx(3).gt.0
-     2      .and. prntx(3).lt.prt%dt) THEN
+            IF (ALL(N.ge.0D0).and. prntx(3).gt.0) THEN
+ !    2      .and. prntx(3).lt.prt%dt) THEN
                   p%faID(1) = ii
                   p%faID(2) = jj
-                  ti = prntx(3)
-                  print *, ti*p%u+p%x
+                  p%ti = prntx(3)
+                  print *, p%ti
+            IF (p%ti .lt.7D0) CALL prt%wall(idp,msh)
                   EXIT faceloop
             ENDIF
 
@@ -866,31 +871,55 @@
       
       END SUBROUTINE findwlPrt
 !--------------------------------------------------------------------
-      SUBROUTINE wallPrt(prt, idp)
+      SUBROUTINE wallPrt(prt, idp, msh)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
+      CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
-      INTEGER ii
-      REAL(KIND=8) :: dp, mp, rho, k
+      INTEGER :: ii
+      REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
+     2 a(nsd), b(nsd), vpar, vperp
 
+      print *, 1
       p   =>prt%dat(idp)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
       k   = prt%mat%krest()
-      !mp = pi*rho/6D0*dp**3D0
+!     Get normal/tangent vector
+      a = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
+     2    msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
+      b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
+     2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
+      nV = CROSS2(a,b)
+      tV = CROSS2(CROSS2(nV,p%u),nV)
+! Rare case with no perpendicular velocity
+      IF (ANY(ISNAN(tV))) tV = 0D0
+      print *, nV
+      
+      vperp = sum(tV*p%u)
+      vpar  = sum(nV*p%u)*k
+      print *, vpar, vperp
+!     Advance to collision location
+      p%xc = p%u*p%ti + p%x
+      p%remdt = prt%dt - p%ti
 
-      DO ii=1,size(prt%sb%box(p%sbIDo(1))%fa)
+!     Change velocities to after collision
+      p%u = -vpar*nV +vperp*tV
+
+!     Advance rest of the way
+      p%x = p%u*p%remdt + p%xc
 
 !     For particles that haven't collided
       IF (.not.p%collided) THEN
 
 
+
       ELSE
+!     For particles that have collided
 
       ENDIF
 
 
-      ENDDO
 
       
       ! First, if collided, check if collision was out of domain w/ sbID,shapeF

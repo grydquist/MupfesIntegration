@@ -128,6 +128,8 @@
          PROCEDURE :: findwl => findwlPrt
 !     Enacts collisions with walls
          PROCEDURE :: wall => wallPrt
+!     Advances particle given time step
+         PROCEDURE :: adv => advPrt
       END TYPE prtType
 
       CONTAINS
@@ -579,7 +581,7 @@
            !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 1.01D0/ip
+           p%x(3) = 3.01D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -659,7 +661,8 @@
          end do
       end do
       fvel = 0
-      fvel(3) = -3D0
+      fvel(3) = -3D0!!!!!!!!!!!!!!
+      if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
 
       ! Relative velocity
       relvel = fvel - p%u
@@ -728,9 +731,13 @@
       ! Exit function if collision won't occur during timestep
       if (tcr.gt.dtp) RETURN
 
+      !!!!!!!!!! Check here if outside. if so, findwl, wall, return 
+
       ! particle locations at point of collision
       p1%xc = p1%u*tcr + p1%x
       p2%xc = p2%u*tcr + p2%x
+      p1%x  = p1%xc
+      p2%x  = p2%xc
 
       ! Vector parallel and pependicular to collision tangent line
       n1 = (p1%xc - p2%xc)/((dp + dp)/2)
@@ -765,28 +772,11 @@
       p1%uc = p1%u
       p2%uc = p2%u
 
-      !!! Needs to be extended for multiple collisions per time step (will probably be here)
-      ! Advance particle the rest of the time step at this velocity.
-      p1%x = p1%xc + p1%u*(dtp - tcr)
-      p2%x = p2%xc + p2%u*(dtp - tcr)
-
       p1%collided = .true.
       p2%collided = .true.
 
-      p1%remdt = dtp-tcr
-      p2%remdt = dtp-tcr
-
-!     Find which searchbox particles are in
-      p1%sbID = prt%sb%id(p1%x)
-!     Find which searchbox particles are in
-      p2%sbID = prt%sb%id(p1%x)
-!     Get shape functions/element of particle
-      Np1 = prt%shapeF(1, lM)
-      Np2 = prt%shapeF(2, lM)
-      !IF ANY(Np1.lt.0)
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p1 
-      !IF ANY(Np2.lt.0)
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p2 
+      p1%remdt = p1%remdt-tcr
+      p2%remdt = p2%remdt-tcr
 
       END SUBROUTINE collidePrt
 !--------------------------------------------------------------------
@@ -880,7 +870,6 @@
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
      2 a(nsd), b(nsd), vpar, vperp
 
-      print *, 1
       p   =>prt%dat(idp)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
@@ -918,9 +907,6 @@
 !     For particles that have collided
 
       ENDIF
-
-
-
       
       ! First, if collided, check if collision was out of domain w/ sbID,shapeF
       ! If not, go back to xco, uco, find element it collides with
@@ -949,52 +935,112 @@
       
       END FUNCTION cross2
 !--------------------------------------------------------------------
-      SUBROUTINE solvePrt(prt, ns)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT), TARGET :: prt
+      SUBROUTINE advPrt(prt, idp, ns,dt)
+      CLASS(prtType), INTENT(IN), TARGET :: prt
+      INTEGER, INTENT(IN) :: idp
       CLASS(ceqType), INTENT(IN) :: ns
-      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
-      REAL(KIND=8) rhoF,
-     2   mu, mp,
-     3   rhoP, N(nsd+1), Ntmp(nsd+1)
-      TYPE(sbType), POINTER :: sb
-      TYPE(mshType), POINTER :: lM
-      TYPE(pRawType), POINTER :: p(:),tp(:)
+      REAL(KIND=8), INTENT(IN) :: dt
+      TYPE(matType), POINTER :: mat
+      TYPE(mshType), POINTER :: msh
+      TYPE(pRawType), POINTER :: p, tp
       TYPE(prtType), TARGET :: tmpprt
-!     Particle/fluid Parameters
-      REAL(KIND=8) :: g(nsd), rho, dtp,maxdtp,sbdt(nsd), dp, taup
-!     Derived from flow
+      TYPE(sbType), POINTER :: sb
+      REAL(KIND=8) rhoF,
+     2   mu, mp, g, dp,
+     3   rhoP, N(nsd+1), Ntmp(nsd+1)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
-!     RK2 stuff
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
 
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
 
-!     Initialize if haven't yet
-      IF(.NOT.prt%crtd) THEN
-            CALL prt%new(1)
-      END IF
-      CALL tmpprt%new(1)
-      
-      ALLOCATE(tp(tmpprt%n))
-      ALLOCATE(p(prt%n))
-      lM => ns%s%dmn%msh(1)
-      p  => prt%dat
-      tp => tmpprt%dat
+      tmpprt = prt
+      mat => ns%s%mat
+      msh => ns%s%dmn%msh(1)
+      p  => prt%dat(idp)
       sb => prt%sb
+      tp => tmpprt%dat(1)
+      tmpprt%sb = sb
       rhoF  = ns%s%mat%rho()
       rhoP  = prt%mat%rho()
       mu    = ns%s%mat%mu()
       dp    = prt%mat%D()
+
+ 1    CONTINUE
+
+      p%xo = p%x
+      p%uo = p%u
+      p%eIDo = p%eID
+      p%sbIDo= p%sbID
+
+!     Find which searchbox particle is in
+      p%sbID = sb%id(p%x)
+!     Get shape functions/element of particle
+      N = prt%shapeF(idp, msh)
+!     Get drag acceleration
+      apd = prt%drag(idp,ns)
+!     Total acceleration (just drag and buoyancy now)
+      apT = apd + g*(1D0 - rhoF/rhoP)
+!     2nd order advance (Heun's Method)
+!     Predictor
+      pvelpred = p%u + dt*apT
+      prtxpred = p%x + dt*p%u
+      tp%u  = pvelpred
+      if (idp.eq.2) tp%u = -pvelpred!!!!!!!!!!!!!!
+      tp%x  = prtxpred
+!     Find which searchbox prediction is in
+      tp%sbID = sb%id(tp%x)
+!     Get shape functions/element of prediction
+      Ntmp = tmpprt%shapeF(1, msh)
+!     Check if predictor OOB
+      IF (ANY(Ntmp.lt.0)) THEN
+!     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
+            tmpprt%findwl
+            tmpprt%wall
+            GOTO 1
+      END IF
+!     Get drag acceleration of predicted particle
+      apdpred = tmpprt%drag(1,ns)
+      if (idp.eq.2) apdpred = -apdpred!!!!!!!!!!!!!!!
+      apTpred = apdpred + g*(1D0 - rhoF/rhoP)
+!     Corrector
+      p%u = p%u + 0.5D0*dt*(apT+apTpred)
+      p%x = dt*p%u + p%x
+
+      END SUBROUTINE advPrt
+!--------------------------------------------------------------------
+      SUBROUTINE solvePrt(prt, ns)
+      IMPLICIT NONE
+      CLASS(prtType), INTENT(INOUT), TARGET :: prt
+      CLASS(ceqType), INTENT(IN) :: ns
+      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
+      TYPE(sbType), POINTER :: sb
+      TYPE(mshType), POINTER :: lM
+      TYPE(pRawType), POINTER :: p(:)
+      TYPE(matType), POINTER :: mat
+!     Particle/fluid Parameters
+      REAL(KIND=8) :: dtp,maxdtp,sbdt(nsd), dp, taup,rhoP,mu
+
+!     Initialize if haven't yet
+      IF(.NOT.prt%crtd) THEN
+            CALL prt%new(1)
+      END IF      
+
+      lM => ns%s%dmn%msh(1)
+      p  => prt%dat
+      sb => prt%sb
+      mat => ns%s%mat
+      rhoP  = prt%mat%rho()
+      mu    = ns%s%mat%mu()
+      dp    = prt%mat%D()
+
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
 
       IF (.NOT.(sb%crtd)) THEN
          CALL sb%new(lM)
       END IF
-      tmpprt%sb = sb
 
 !!!!! get time step broken down to be dictated by either fastest velocity(in terms of sb's traveled), relax time, overall solver dt
 !!! idea: do one more loop through all particles above this one and get time step for each one, then take minimum
@@ -1008,47 +1054,12 @@
       prt%dt = dtp
 
       DO l = 1,subit
-      DO i = 1,prt%n
-!     Old velocity and position and eID
-      p(i)%xo = p(i)%x
-      p(i)%uo = p(i)%u
-      p(i)%eIDo = p(i)%eID
-      p(i)%sbIDo= p(i)%sbID
 
-!     If particles haven't exited domain (or it's the first iter) their sbID is known
-      IF (p(i)%sbID(1) .eq. 0) THEN
-!        Find which searchbox particle is in
-         p(i)%sbID = sb%id(p(i)%x)
-!        Get shape functions/element of particle
-         N = prt%shapeF(i, lM)
-      END IF
-
-!        Get drag acceleration
-         apd = prt%drag(i,ns)
-!        Total acceleration (just drag and buoyancy now)
-         apT = apd + g*(1D0 - rhoF/rhoP)
-!        2nd order advance (Heun's Method)
-!        Predictor
-         pvelpred = p(i)%u + dtp*apT
-         prtxpred = p(i)%x + dtp*p(i)%u
-         tp(1)%u  = pvelpred 
-         tp(1)%x  = prtxpred
-!        Find which searchbox prediction is in
-         tp(1)%sbID = sb%id(tp(1)%x)
-!        Get shape functions/element of prediction
-         Ntmp = tmpprt%shapeF(1, lM)
-
-!!! check if outside domain
-!        Get drag acceleration of predicted particle
-         apdpred = tmpprt%drag(1,ns)
-         apTpred = apdpred + g*(1D0 - rhoF/rhoP)
-!        Corrector
-         p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred)
-      call prt%findwl(i,lM)
-      END DO
-
-      !!! REALLY need to figure out how to make it so it only checks for collisions in the same searchbox
+      !!! Do all collisions first, and only advance to point of collision
+      !!! 2nd order: get vel at t impact, use that, but
+      !!! Do same for wall collisions if it is out before coll
       DO i=1,prt%n
+      p(i)%remdt = dtp
 !        Collisions
          DO j=1,prt%n
 !        Check if the particle collides with any other particles and hasn't collided. Advance if so.
@@ -1056,26 +1067,16 @@
                 CALL prt%collide(i,j,dtp,lM)
             END IF
          ENDDO
+      ENDDO
 
-!        If particles haven't collided, advance by vel*dtp
-         IF (.not.(p(i)%collided)) THEN
-            p(i)%x = dtp*p(i)%u + p(i)%x
-!           Check if particles are still in domain
-!!!!!! Use previous element id here eventually
-!           Find which searchbox particle is in
-            p(i)%sbID = sb%id(p(i)%x)
-!           Get shape functions/element of particle
-            N = prt%shapeF(i, lM)
-            !IF ANY(N.lt.0)
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt 
-         END IF
-
+      DO i = 1,prt%n
+            CALL prt%adv(i, ns, p(i)%remdt)
+            print *, p(i)%x
 !        Reset if particles have collided
          p(i)%collided = .false.
+      END DO
 
-         print *, p(i)%x
-      END DO
-      END DO
+      ENDDO
 
       RETURN
       END SUBROUTINE solvePrt

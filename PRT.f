@@ -267,7 +267,7 @@
       TYPE(facelsboxType), ALLOCATABLE :: facels(:)
       INTEGER :: ii,jj,cnt2,kk,ll
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
-      REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl)
+      REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl), eps(nsd)
       INTEGER, ALLOCATABLE :: sbel(:),sbelf(:)
       INTEGER :: split(nsd)
       IF (sb%crtd) RETURN
@@ -291,8 +291,10 @@
       diff(1)=MAXVAL(msh%x(1,:))-MINVAL(msh%x(1,:))
       diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
       diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
+      ! Tolerance
+      eps = 0.01*diff
       ! Size of sb
-      sb%step=diff/((sb%n+1)/2)
+      sb%step=diff/((sb%n+1)/2) + eps
 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
@@ -306,19 +308,19 @@
       ! Direction 1
       do ii=1,sb%n(1)
          sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:)) 
-     2       + sb%step(1)*(ii-1)/2
+     2       + sb%step(1)*(ii-1)/2 - eps(1)/2
       end do
 
       ! Direction 2
       do ii=1,sb%n(2)
          sb%box(seq2+(ii-1)*sb%n(1))%dim(3) = MINVAL(msh%x(2,:))
-     2       + sb%step(2)*(ii-1)/2
+     2       + sb%step(2)*(ii-1)/2 - eps(2)/2
       end do
 
       ! Direction 3
       do ii=1,sb%n(3)
          sb%box(seq3+(ii-1)*sb%n(1)*sb%n(2))%dim(5)=
-     2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2
+     2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2 - eps(3)/2
       end do
 
       sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
@@ -581,7 +583,7 @@
            !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 3.01D0/ip
+           p%x(3) = 29.95D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -661,7 +663,7 @@
          end do
       end do
       fvel = 0
-      fvel(3) = -3D0!!!!!!!!!!!!!!
+      fvel(3) = 3D0!!!!!!!!!!!!!!
       if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
 
       ! Relative velocity
@@ -731,7 +733,7 @@
       ! Exit function if collision won't occur during timestep
       if (tcr.gt.dtp) RETURN
 
-      !!!!!!!!!! Check here if outside. if so, findwl, wall, return 
+!!!!!!!!!! Check here if outside. if so, findwl, wall, return 
 
       ! particle locations at point of collision
       p1%xc = p1%u*tcr + p1%x
@@ -895,18 +897,6 @@
 !     Change velocities to after collision
       p%u = -vpar*nV +vperp*tV
 
-!     Advance rest of the way
-      p%x = p%u*p%remdt + p%xc
-
-!     For particles that haven't collided
-      IF (.not.p%collided) THEN
-
-
-
-      ELSE
-!     For particles that have collided
-
-      ENDIF
       
       ! First, if collided, check if collision was out of domain w/ sbID,shapeF
       ! If not, go back to xco, uco, find element it collides with
@@ -991,13 +981,24 @@
       tp%x  = prtxpred
 !     Find which searchbox prediction is in
       tp%sbID = sb%id(tp%x)
+      print *, tp%sbID, sb%n(1)*sb%n(2)*sb%n(3)
+
+      IF ((tp%sbID(1) .gt. sb%n(1)*sb%n(2)*sb%n(3))
+     2  .or. tp%sbID(1) .lt. 0) THEN
+            Ntmp = -1D0
+            GOTO 2
+      END IF
+
 !     Get shape functions/element of prediction
       Ntmp = tmpprt%shapeF(1, msh)
+2     CONTINUE  
 !     Check if predictor OOB
       IF (ANY(Ntmp.lt.0)) THEN
 !     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
-            tmpprt%findwl
-            tmpprt%wall
+      print *, 1
+            CALL tmpprt%findwl(1,msh)
+            print *, 2
+            CALL tmpprt%wall(1,msh)
             GOTO 1
       END IF
 !     Get drag acceleration of predicted particle

@@ -664,10 +664,10 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
-      fvel = 0
-      fvel(3) = -3D0!!!!!!!!!!!!!!
-      fvel(1) = 3D0
-      if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
+      !fvel = 0
+      !fvel(3) = -3D0!!!!!!!!!!!!!!
+      !fvel(1) = 3D0
+      !if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
 
       ! Relative velocity
       relvel = fvel - p%u
@@ -743,6 +743,15 @@
       p2%xc = p2%u*tcr + p2%x
       p1%x  = p1%xc
       p2%x  = p2%xc
+
+!     Check if the particle is outside the domain
+      Np1 = prt%shapeF(id1, lM)
+      Np2 = prt%shapeF(id2, lM)
+      IF (ANY(Np1.lt.0) .or. ANY(Np2.lt.0)) THEN
+            p1%x = p1%xo
+            p2%x = p2%xo
+            RETURN
+      END IF
 
       ! Vector parallel and pependicular to collision tangent line
       n1 = (p1%xc - p2%xc)/((dp + dp)/2)
@@ -895,20 +904,10 @@
 !     Advance to collision location
       p%xc = p%u*p%ti + p%x
       p%x  = p%xc
-      p%remdt = prt%dt - p%ti
+      p%remdt = p%remdt - p%ti
 
 !     Change velocities to after collision
       p%u = -vpar*nV +vperp*tV
-
-      
-      ! First, if collided, check if collision was out of domain w/ sbID,shapeF
-      ! If not, go back to xco, uco, find element it collides with
-      ! If so, go back to xo, uo
-      ! Get collision velocities/positions
-      ! advance remaining time step
-      ! For above, do the same if not collided, just go back to xo,uo
-      ! maybe don't use uo, but use velocity you used to translate?
-      ! At the end, set sbID = 0 so it finds it next time around
 
       END SUBROUTINE wallPrt
 
@@ -983,7 +982,7 @@
       pvelpred = p%u + p%remdt*apT
       prtxpred = p%x + p%remdt*p%u
       tp%u  = pvelpred
-      if (idp.eq.2) tp%u = -pvelpred!!!!!!!!!!!!!!
+      !if (idp.eq.2) tp%u = -pvelpred!!!!!!!!!!!!!!
       tp%x  = prtxpred
 
 !     Find which searchbox prediction is in
@@ -997,12 +996,15 @@
 !     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
             CALL prt%findwl(idp,msh)
             CALL prt%wall(idp,msh)
-            GOTO 1
+            p%x = p%x + p%remdt*p%u
+            p%wall = .TRUE.
+            print *, 1
+            RETURN
       END IF
 
 !     Get drag acceleration of predicted particle
       apdpred = tmpprt%drag(1,ns)
-      if (idp.eq.2) apdpred = -apdpred!!!!!!!!!!!!!!!
+      !if (idp.eq.2) apdpred = -apdpred!!!!!!!!!!!!!!!
       apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !     Corrector
       p%u = p%u + 0.5D0*p%remdt*(apT+apTpred)
@@ -1018,6 +1020,7 @@
             CALL prt%wall(idp,msh)
             p%x = p%x + p%remdt*p%u
             p%wall = .TRUE.
+            print *, 2
             RETURN
       END IF
 
@@ -1105,3 +1108,5 @@
       !!!! Urgent fixes after wall:
       !!!! Add in so it only checks in same searchbox
       !!!! Add in so, to find element particle is in, it checks first element from last time
+
+      !!! Right now doesn't consider collisions after other collisions (wall or particle)

@@ -80,6 +80,8 @@
          REAL(KIND=8) :: remdt
 !     Time until collision
          REAL(KIND=8) :: ti
+!     Did particle hit a wall?
+         LOGICAL :: wall = .TRUE.
       END TYPE pRawType
 
 !     Collection of particles
@@ -144,7 +146,7 @@
       INTEGER i
 
       IF (prt%crtd) RETURN
-
+      open(88,file='pos.txt')
       IF (PRESENT(n)) prt%maxN = n
       ALLOCATE(prt%dat(prt%maxN), prt%ptr(prt%maxN))
       DO i=1, prt%maxN
@@ -292,7 +294,7 @@
       diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
       diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
       ! Tolerance
-      eps = 0.01*diff
+      eps = 0.5*diff
       ! Size of sb
       sb%step=diff/((sb%n+1)/2) + eps
 
@@ -560,7 +562,7 @@
 
       ! If it loops through everything and doesn't yield a positive shape function,
       ! the particle is outside the domain
-      if (p%eID.eq.0) io%e = 'outside domain'
+      !if (p%eID.eq.0) io%e = 'outside domain'
 
       RETURN
       END FUNCTION shapeFPrt
@@ -581,9 +583,9 @@
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            !CALL prt%add(p)
-           p%x(1) = 0D0
+           p%x(1) = 1.8D0
            p%x(2) = 0D0
-           p%x(3) = 29.95D0/ip
+           p%x(3) = 0.5D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -663,7 +665,8 @@
          end do
       end do
       fvel = 0
-      fvel(3) = 3D0!!!!!!!!!!!!!!
+      fvel(3) = -3D0!!!!!!!!!!!!!!
+      fvel(1) = 3D0
       if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
 
       ! Relative velocity
@@ -692,7 +695,7 @@
       REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd)
       REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, mp, rho, k
 !     Coefficients to make calculating parallel/perp vel easier
-      REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1)
+      REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1) , temp(nsd)
 
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
@@ -744,8 +747,10 @@
       ! Vector parallel and pependicular to collision tangent line
       n1 = (p1%xc - p2%xc)/((dp + dp)/2)
       n2 = -n1
-      t1 = cross2(cross2(n1,p1%u),n1)
-      t2 = cross2(cross2(n2,p2%u),n2)
+      temp = cross2(n1,p1%u)
+      t1 = cross2(temp,n1)
+      temp = cross2(n2,p2%u)
+      t2 = cross2(temp,n2)
 
       ! Rare case with no perpendicular velocity
       if (ANY(ISNAN(t1))) t1 = 0D0
@@ -847,13 +852,11 @@
             N(2) = prntx(2)
             N(3) = 1 - prntx(1) - prntx(2)
 
-            IF (ALL(N.ge.0D0).and. prntx(3).gt.0) THEN
- !    2      .and. prntx(3).lt.prt%dt) THEN
+            IF (ALL(N.ge.0D0).and. prntx(3).gt.0
+     2      .and. prntx(3).lt.prt%dt) THEN
                   p%faID(1) = ii
-                  p%faID(2) = jj
+                  p%faID(2) = b%fa(ii)%els(jj)
                   p%ti = prntx(3)
-                  print *, p%ti
-            IF (p%ti .lt.7D0) CALL prt%wall(idp,msh)
                   EXIT faceloop
             ENDIF
 
@@ -870,7 +873,7 @@
       TYPE(pRawType), POINTER :: p
       INTEGER :: ii
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
-     2 a(nsd), b(nsd), vpar, vperp
+     2 a(nsd), b(nsd), vpar, vperp, temp(nsd)
 
       p   =>prt%dat(idp)
       dp  = prt%mat%D()
@@ -882,16 +885,16 @@
       b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
      2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
       nV = CROSS2(a,b)
-      tV = CROSS2(CROSS2(nV,p%u),nV)
+      temp = CROSS2(nV,p%u)
+      tV = CROSS2(temp,nV)
 ! Rare case with no perpendicular velocity
       IF (ANY(ISNAN(tV))) tV = 0D0
-      print *, nV
       
       vperp = sum(tV*p%u)
       vpar  = sum(nV*p%u)*k
-      print *, vpar, vperp
 !     Advance to collision location
       p%xc = p%u*p%ti + p%x
+      p%x  = p%xc
       p%remdt = prt%dt - p%ti
 
 !     Change velocities to after collision
@@ -925,11 +928,10 @@
       
       END FUNCTION cross2
 !--------------------------------------------------------------------
-      SUBROUTINE advPrt(prt, idp, ns,dt)
+      SUBROUTINE advPrt(prt, idp, ns)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
       CLASS(ceqType), INTENT(IN) :: ns
-      REAL(KIND=8), INTENT(IN) :: dt
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       TYPE(pRawType), POINTER :: p, tp
@@ -957,57 +959,70 @@
       mu    = ns%s%mat%mu()
       dp    = prt%mat%D()
 
- 1    CONTINUE
-
+!     Set last coordinates
       p%xo = p%x
       p%uo = p%u
       p%eIDo = p%eID
       p%sbIDo= p%sbID
 
-!     Find which searchbox particle is in
-      p%sbID = sb%id(p%x)
-!     Get shape functions/element of particle
-      N = prt%shapeF(idp, msh)
+ 1    CONTINUE
+
+      IF (p%wall) THEN
+!           Find which searchbox particle is in
+            p%sbID = sb%id(p%x)
+!           Get shape functions/element of particle
+            N = prt%shapeF(idp, msh)
+      END IF
+
 !     Get drag acceleration
       apd = prt%drag(idp,ns)
 !     Total acceleration (just drag and buoyancy now)
       apT = apd + g*(1D0 - rhoF/rhoP)
 !     2nd order advance (Heun's Method)
 !     Predictor
-      pvelpred = p%u + dt*apT
-      prtxpred = p%x + dt*p%u
+      pvelpred = p%u + p%remdt*apT
+      prtxpred = p%x + p%remdt*p%u
       tp%u  = pvelpred
       if (idp.eq.2) tp%u = -pvelpred!!!!!!!!!!!!!!
       tp%x  = prtxpred
+
 !     Find which searchbox prediction is in
       tp%sbID = sb%id(tp%x)
-      print *, tp%sbID, sb%n(1)*sb%n(2)*sb%n(3)
-
-      IF ((tp%sbID(1) .gt. sb%n(1)*sb%n(2)*sb%n(3))
-     2  .or. tp%sbID(1) .lt. 0) THEN
-            Ntmp = -1D0
-            GOTO 2
-      END IF
 
 !     Get shape functions/element of prediction
       Ntmp = tmpprt%shapeF(1, msh)
-2     CONTINUE  
+
 !     Check if predictor OOB
       IF (ANY(Ntmp.lt.0)) THEN
 !     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
-      print *, 1
-            CALL tmpprt%findwl(1,msh)
-            print *, 2
-            CALL tmpprt%wall(1,msh)
+            CALL prt%findwl(idp,msh)
+            CALL prt%wall(idp,msh)
             GOTO 1
       END IF
+
 !     Get drag acceleration of predicted particle
       apdpred = tmpprt%drag(1,ns)
       if (idp.eq.2) apdpred = -apdpred!!!!!!!!!!!!!!!
       apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !     Corrector
-      p%u = p%u + 0.5D0*dt*(apT+apTpred)
-      p%x = dt*p%u + p%x
+      p%u = p%u + 0.5D0*p%remdt*(apT+apTpred)
+      p%x = p%remdt*p%u + p%x
+
+!     Check if particle went out of bounds
+      p%sbID = sb%id(p%x)
+      N = prt%shapeF(idp, msh)
+
+      IF (ANY(N .lt. 0)) THEN
+            p%x = p%xo
+            CALL prt%findwl(idp,msh)
+            CALL prt%wall(idp,msh)
+            p%x = p%x + p%remdt*p%u
+            p%wall = .TRUE.
+            RETURN
+      END IF
+
+      p%wall = .FALSE.
+      RETURN
 
       END SUBROUTINE advPrt
 !--------------------------------------------------------------------
@@ -1025,7 +1040,7 @@
 
 !     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
-            CALL prt%new(1)
+            CALL prt%new(2)
       END IF      
 
       lM => ns%s%dmn%msh(1)
@@ -1071,11 +1086,13 @@
       ENDDO
 
       DO i = 1,prt%n
-            CALL prt%adv(i, ns, p(i)%remdt)
+            CALL prt%adv(i, ns)
             print *, p(i)%x
 !        Reset if particles have collided
          p(i)%collided = .false.
       END DO
+
+      write(88,*) p(1)%x, p(2)%x
 
       ENDDO
 

@@ -455,7 +455,7 @@
       LOGICAL NOX
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
-      INTEGER :: ii,cnt,a
+      INTEGER :: ii,cnt,a, ind
       REAL(KIND=8) :: Jac,xXi(nsd,nsd), xiX(nsd,nsd),Nx(nsd,nsd+1),
      2 Nxi(nsd,nsd+1),prntx(nsd)
       cnt=1
@@ -480,7 +480,9 @@
       p%eID = 0
       b => prt%sb%box(p%sbID(1))
 
-      do ii=1,size(b%els)
+      do ii=1,size(b%els)+1
+            ind = ii
+            if (ii.eq.1) ind = p%eIDo
 
       xXi = 0D0
 
@@ -512,11 +514,11 @@
       ! Setting up matrix to be inverted
          DO a=1, msh%eNoN
             xXi(:,1) = xXi(:,1) +
-     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(1,a)
+     2        msh%x(:,msh%IEN(a,b%els(ind)))*Nxi(1,a)
             xXi(:,2) = xXi(:,2) +
-     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(2,a)
+     2        msh%x(:,msh%IEN(a,b%els(ind)))*Nxi(2,a)
             xXi(:,3) = xXi(:,3) + 
-     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(3,a)
+     2        msh%x(:,msh%IEN(a,b%els(ind)))*Nxi(3,a)
          END DO
          
       ! Inverting matrix
@@ -539,9 +541,9 @@
          
       ! Finding particle coordinates in parent coordinate system
          DO a=1, nsd
-            prntx(a) = xiX(a,1)*(p%x(1) - msh%x(1,msh%IEN(4,b%els(ii))))
-     2               + xiX(a,2)*(p%x(2) - msh%x(2,msh%IEN(4,b%els(ii))))
-     3               + xiX(a,3)*(p%x(3) - msh%x(3,msh%IEN(4,b%els(ii))))
+            prntx(a) = xiX(a,1)*(p%x(1) - msh%x(1,msh%IEN(4,b%els(ind))))
+     2               + xiX(a,2)*(p%x(2) - msh%x(2,msh%IEN(4,b%els(ind))))
+     3               + xiX(a,3)*(p%x(3) - msh%x(3,msh%IEN(4,b%els(ind))))
          END DO
       END IF
 
@@ -553,7 +555,7 @@
 
       ! Checking if all shape functions are positive
       IF (ALL(N.ge.0D0)) then
-         p%eID=b%els(ii)
+         p%eID=b%els(ind)
          p%N = N
          EXIT
       END IF

@@ -16,7 +16,11 @@
 
 !     Faces and their elements
       TYPE facelsType
+      ! Elements of face
             INTEGER, ALLOCATABLE :: els(:)
+      ! Type of face (1 = wall, 2 = inlet, 3 = outlet)
+            INTEGER :: type = 0
+
       END TYPE
 
 !     Individual box
@@ -49,7 +53,7 @@
 !     Your data type that you need to store in a Dynamic Sized Container
       TYPE pRawType
 !     Eulerian element ID that this particle belongs to
-         INTEGER(KIND=8) :: eID=0
+         INTEGER(KIND=8) :: eID=1
 !     Previous element ID
          INTEGER(KIND=8) :: eIDo=1
 !     Particle ID
@@ -477,14 +481,13 @@
      2   io%e = "shapeFPrt only defined for tet elements"
 
       p => prt%dat(ip)
-      p%eID = 0
       b => prt%sb%box(p%sbID(1))
 
       do ii=1,size(b%els)+1
-            ind = ii
-            if (ii.eq.1) ind = p%eIDo
 
-      xXi = 0D0
+            ind = b%els(ii-1)
+            if (ii.eq.1) ind = p%eIDo
+            xXi = 0D0
 
       IF (nsd .EQ. 2) THEN
       !
@@ -514,11 +517,11 @@
       ! Setting up matrix to be inverted
          DO a=1, msh%eNoN
             xXi(:,1) = xXi(:,1) +
-     2        msh%x(:,msh%IEN(a,b%els(ind)))*Nxi(1,a)
+     2        msh%x(:,msh%IEN(a,ind))*Nxi(1,a)
             xXi(:,2) = xXi(:,2) +
-     2        msh%x(:,msh%IEN(a,b%els(ind)))*Nxi(2,a)
+     2        msh%x(:,msh%IEN(a,ind))*Nxi(2,a)
             xXi(:,3) = xXi(:,3) + 
-     2        msh%x(:,msh%IEN(a,b%els(ind)))*Nxi(3,a)
+     2        msh%x(:,msh%IEN(a,ind))*Nxi(3,a)
          END DO
          
       ! Inverting matrix
@@ -541,9 +544,9 @@
          
       ! Finding particle coordinates in parent coordinate system
          DO a=1, nsd
-            prntx(a) = xiX(a,1)*(p%x(1) - msh%x(1,msh%IEN(4,b%els(ind))))
-     2               + xiX(a,2)*(p%x(2) - msh%x(2,msh%IEN(4,b%els(ind))))
-     3               + xiX(a,3)*(p%x(3) - msh%x(3,msh%IEN(4,b%els(ind))))
+            prntx(a) = xiX(a,1)*(p%x(1)- msh%x(1,msh%IEN(4,ind)))
+     2               + xiX(a,2)*(p%x(2)- msh%x(2,msh%IEN(4,ind)))
+     3               + xiX(a,3)*(p%x(3)- msh%x(3,msh%IEN(4,ind)))
          END DO
       END IF
 
@@ -555,7 +558,7 @@
 
       ! Checking if all shape functions are positive
       IF (ALL(N.ge.0D0)) then
-         p%eID=b%els(ind)
+         p%eID=ind
          p%N = N
          EXIT
       END IF
@@ -585,9 +588,9 @@
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            !CALL prt%add(p)
-           p%x(1) = 1.8D0
+           p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 0.5D0/ip
+           p%x(3) = 5D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -738,8 +741,6 @@
       ! Exit function if collision won't occur during timestep
       if (tcr.gt.dtp) RETURN
 
-!!!!!!!!!! Check here if outside. if so, findwl, wall, return 
-
       ! particle locations at point of collision
       p1%xc = p1%u*tcr + p1%x
       p2%xc = p2%u*tcr + p2%x
@@ -882,34 +883,54 @@
       INTEGER, INTENT(IN) :: idp
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
-      INTEGER :: ii
+      INTEGER :: ii, rndi
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
-     2 a(nsd), b(nsd), vpar, vperp, temp(nsd)
+     2 a(nsd), b(nsd), vpar, vperp, temp(nsd), rnd
 
       p   =>prt%dat(idp)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
       k   = prt%mat%krest()
-!     Get normal/tangent vector
-      a = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
-     2    msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
-      b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
-     2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
-      nV = CROSS2(a,b)
-      temp = CROSS2(nV,p%u)
-      tV = CROSS2(temp,nV)
-! Rare case with no perpendicular velocity
-      IF (ANY(ISNAN(tV))) tV = 0D0
-      
-      vperp = sum(tV*p%u)
-      vpar  = sum(nV*p%u)*k
+
 !     Advance to collision location
       p%xc = p%u*p%ti + p%x
       p%x  = p%xc
       p%remdt = p%remdt - p%ti
 
-!     Change velocities to after collision
-      p%u = -vpar*nV +vperp*tV
+      IF (msh%fa(p%faID(1))%typ .EQ. 3) THEN
+!     Hitting wall
+
+!     Get normal/tangent vector
+            a = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
+     2    msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
+            b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
+     2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
+            nV = CROSS2(a,b)
+            temp = CROSS2(nV,p%u)
+            tV = CROSS2(temp,nV)
+      ! Rare case with no perpendicular velocity
+            IF (ANY(ISNAN(tV))) tV = 0D0
+            vperp = sum(tV*p%u)
+            vpar  = sum(nV*p%u)*k
+      !     Change velocities to after collision
+            p%u = -vpar*nV +vperp*tV
+
+      ELSE
+
+!     Exiting domain
+      faloop:DO ii = 1,msh%nFa
+!           If inlet...
+            IF (msh%fa(ii)%typ .EQ. 1) THEN
+!           Select random node on face to set as particle position
+            CALL RANDOM_NUMBER(rnd)
+            rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
+            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi))
+
+            EXIT faloop
+            END IF
+      ENDDO faloop
+
+      END IF
 
       END SUBROUTINE wallPrt
 
@@ -1000,7 +1021,6 @@
             CALL prt%wall(idp,msh)
             p%x = p%x + p%remdt*p%u
             p%wall = .TRUE.
-            print *, 1
             RETURN
       END IF
 
@@ -1022,7 +1042,6 @@
             CALL prt%wall(idp,msh)
             p%x = p%x + p%remdt*p%u
             p%wall = .TRUE.
-            print *, 2
             RETURN
       END IF
 
@@ -1109,6 +1128,6 @@
 
       !!!! Urgent fixes after wall:
       !!!! Add in so it only checks in same searchbox
-      !!!! Add in so, to find element particle is in, it checks first element from last time
+      !!!! Velocity seems weird
 
       !!! Right now doesn't consider collisions after other collisions (wall or particle)

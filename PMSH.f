@@ -43,6 +43,8 @@ c         PRIVATE
          REAL(KIND=8), ALLOCATABLE :: nV(:,:)
 !        Face name for flux files
          CHARACTER(LEN=stdL) :: name = DEFAULT_NAME
+!        Type of face (1 = inlet, 2 = outlet, 3 = wall)
+         INTEGER :: typ
       CONTAINS
 !        To deallocate the face
          PROCEDURE :: free => freeFace

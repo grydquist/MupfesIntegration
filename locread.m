@@ -37,5 +37,8 @@ for i=1:length(cell)/6
 
   clf;
 end
+% [xc,yc,zc] = cylinder(2);
+% zc(2,:) = 30;
+% surf(xc,yc,zc)
 
 fclose all;

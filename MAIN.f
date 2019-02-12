@@ -253,7 +253,7 @@
                   allOk = allOk .AND. eq(iEq)%s%satisfied()
                   !        Grant temp stuff
                   !! check eq ns then call (Select Type)
-                  CALL prt%solve(eq(1))
+                  CALL prt%solve(eq(1)%s)
                END DO
                IF (allOk) EXIT
             END DO

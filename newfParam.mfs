@@ -61,12 +61,15 @@ Add mesh: msh {
    vtk file path: ../mesh/cylinder/lumen.vtk
    Add face: lumen_inlet {
       vtk file path: ../mesh/cylinder/mesh-surfaces/lumen_inlet.vtk
+	  Face type: inlet
    }
    Add face: lumen_outlet {
       vtk file path: ../mesh/cylinder/mesh-surfaces/lumen_outlet.vtk
+	  Face type: outlet
    }
    Add face: lumen_wall {
       vtk file path: ../mesh/cylinder/mesh-surfaces/lumen_wall.vtk
+	  Face type: wall
    }
 }
 #----------------------------------------------------------------

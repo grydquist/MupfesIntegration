@@ -1,5 +1,5 @@
       MODULE PRTMOD
-      USE EQMOD
+      USE INSMOD
 !     FSI is using PRTMOD
       IMPLICIT NONE
       
@@ -637,7 +637,7 @@
       FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER,INTENT(IN) :: ip
-      CLASS(ceqType), INTENT(IN) :: ns
+      CLASS(eqType), INTENT(IN) :: ns
       REAL(KIND=8) :: taupo      
       TYPE(gVarType),POINTER :: u
       TYPE(matType), POINTER :: mat
@@ -651,9 +651,9 @@
       p => prt%dat(ip)
       dp = prt%mat%D()
       rhoP = prt%mat%rho()
-      mat => ns%s%mat
-      msh => ns%s%dmn%msh(1)
-      u => ns%s%var(1)
+      mat => ns%mat
+      msh => ns%dmn%msh(1)
+      u => ns%var(1)
 
 !     Fluid parameters
       rhoF = mat%rho()
@@ -671,7 +671,7 @@
       end do
       !fvel = 0
       !fvel(3) = -3D0!!!!!!!!!!!!!!
-      !fvel(1) = 3D0
+      !fvel(1) = fvel(1)+1
       !if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
 
       ! Relative velocity
@@ -953,33 +953,39 @@
       SUBROUTINE advPrt(prt, idp, ns)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
-      CLASS(ceqType), INTENT(IN) :: ns
+      CLASS(eqType), INTENT(IN) :: ns
+      !TYPE(insType), POINTER :: ins
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       TYPE(pRawType), POINTER :: p, tp
       TYPE(prtType), TARGET :: tmpprt
       TYPE(sbType), POINTER :: sb
+      TYPE(gVarType),POINTER :: u
       REAL(KIND=8) rhoF,
      2   mu, mp, g, dp,
      3   rhoP, N(nsd+1), Ntmp(nsd+1)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
+      INTEGER :: a
 
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
+      !ins => ns%s
 
       tmpprt = prt
-      mat => ns%s%mat
-      msh => ns%s%dmn%msh(1)
+      mat => ns%mat
+      msh => ns%dmn%msh(1)
       p  => prt%dat(idp)
       sb => prt%sb
       tp => tmpprt%dat(1)
+      u => ns%var(1)
       tmpprt%sb = sb
-      rhoF  = ns%s%mat%rho()
+      rhoF  = ns%mat%rho()
       rhoP  = prt%mat%rho()
-      mu    = ns%s%mat%mu()
+      mu    = ns%mat%mu()
       dp    = prt%mat%D()
+      mp = pi*rhoP/6D0*dp**3D0
 
 !     Set last coordinates
       p%xo = p%x
@@ -1032,6 +1038,11 @@
       p%u = p%u + 0.5D0*p%remdt*(apT+apTpred)
       p%x = p%remdt*p%u + p%x
 
+      DO a=1,msh%eNoN
+            u%A%v(:,msh%IEN(a,p%eID)) =
+     2       0.5*(apT + apTpred)*mP/rhoF*N(a)
+      END DO
+
 !     Check if particle went out of bounds
       p%sbID = sb%id(p%x)
       N = prt%shapeF(idp, msh)
@@ -1053,7 +1064,8 @@
       SUBROUTINE solvePrt(prt, ns)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT), TARGET :: prt
-      CLASS(ceqType), INTENT(IN) :: ns
+      CLASS(eqType), INTENT(IN) :: ns
+      !CLASS(insType), INTENT(IN) :: ns
       INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
       TYPE(sbType), POINTER :: sb
       TYPE(mshType), POINTER :: lM
@@ -1067,12 +1079,12 @@
             CALL prt%new(2)
       END IF      
 
-      lM => ns%s%dmn%msh(1)
+      lM => ns%dmn%msh(1)
       p  => prt%dat
       sb => prt%sb
-      mat => ns%s%mat
+      mat => ns%mat
       rhoP  = prt%mat%rho()
-      mu    = ns%s%mat%mu()
+      mu    = ns%mat%mu()
       dp    = prt%mat%D()
 
 !     Particle relaxation time
@@ -1129,5 +1141,6 @@
       !!!! Urgent fixes after wall:
       !!!! Add in so it only checks in same searchbox
       !!!! Velocity seems weird
+      !!!! check if it is putting momentum back in
 
       !!! Right now doesn't consider collisions after other collisions (wall or particle)

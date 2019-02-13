@@ -250,10 +250,10 @@
                allOk = .TRUE.
                DO iEq=1, nEq
                   CALL eq(iEq)%s%solve()
-                  allOk = allOk .AND. eq(iEq)%s%satisfied()
                   !        Grant temp stuff
                   !! check eq ns then call (Select Type)
                   CALL prt%solve(eq(1)%s)
+                  allOk = allOk .AND. eq(iEq)%s%satisfied()
                END DO
                IF (allOk) EXIT
             END DO

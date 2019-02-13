@@ -962,7 +962,7 @@
       TYPE(sbType), POINTER :: sb
       TYPE(gVarType),POINTER :: u
       REAL(KIND=8) rhoF,
-     2   mu, mp, g, dp,
+     2   mu, mp, g(nsd), dp,
      3   rhoP, N(nsd+1), Ntmp(nsd+1)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
@@ -970,7 +970,7 @@
 
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
-      g=0D0
+      g(3)=10D0
       !ins => ns%s
 
       tmpprt = prt
@@ -1039,9 +1039,11 @@
       p%x = p%remdt*p%u + p%x
 
       DO a=1,msh%eNoN
-            u%A%v(:,msh%IEN(a,p%eID)) =
-     2       0.5*(apT + apTpred)*mP/rhoF*N(a)
+            u%OC%v(:,msh%IEN(a,p%eID)) = 
+     3      -0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)
       END DO
+      !print *, ns%var(1)%OC%v(1,p%eID)
+      !print *, u%v(:,msh%IEN(3,p%eIDo))
 
 !     Check if particle went out of bounds
       p%sbID = sb%id(p%x)
@@ -1065,7 +1067,6 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT), TARGET :: prt
       CLASS(eqType), INTENT(IN) :: ns
-      !CLASS(insType), INTENT(IN) :: ns
       INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
       TYPE(sbType), POINTER :: sb
       TYPE(mshType), POINTER :: lM
@@ -1076,7 +1077,7 @@
 
 !     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
-            CALL prt%new(2)
+            CALL prt%new(1)
       END IF      
 
       lM => ns%dmn%msh(1)
@@ -1128,7 +1129,7 @@
          p(i)%collided = .false.
       END DO
 
-      write(88,*) p(1)%x, p(2)%x
+      write(88,*) p(1)%x!, p(2)%x
 
       ENDDO
 

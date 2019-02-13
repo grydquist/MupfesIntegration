@@ -139,9 +139,14 @@
          px(2) = px(2) + Nx(2,a)*eq%P%s(Ac)
          px(3) = px(3) + Nx(3,a)*eq%P%s(Ac)
       
-         ud(1) = ud(1) + N(a)*eq%U%A%v(1,Ac)
-         ud(2) = ud(2) + N(a)*eq%U%A%v(2,Ac)
-         ud(3) = ud(3) + N(a)*eq%U%A%v(3,Ac)
+         ud(1) = ud(1) + N(a)*(eq%U%A%v(1,Ac)
+     2    + eq%U%OC%v(1,AC))
+         ud(2) = ud(2) + N(a)*(eq%U%A%v(2,Ac)
+     2    + eq%U%OC%v(2,AC))
+         ud(3) = ud(3) + N(a)*(eq%U%A%v(3,Ac)
+     2    + eq%U%OC%v(3,AC))
+
+         eq%U%OC%v(:,AC) = 0
 
          u(1) = u(1) + N(a)*eq%U%v(1,Ac)
          u(2) = u(2) + N(a)*eq%U%v(2,Ac)

@@ -1141,7 +1141,5 @@
 
       !!!! Urgent fixes after wall:
       !!!! Add in so it only checks in same searchbox
-      !!!! Velocity seems weird
-      !!!! check if it is putting momentum back in
-
+      !!!! Velocity seems weird. perhaps dt
       !!! Right now doesn't consider collisions after other collisions (wall or particle)

@@ -146,7 +146,7 @@
          ud(3) = ud(3) + N(a)*(eq%U%A%v(3,Ac)
      2    + eq%U%OC%v(3,AC))
 
-         eq%U%OC%v(:,AC) = 0
+         !eq%U%OC%v(:,AC) = 0
 
          u(1) = u(1) + N(a)*eq%U%v(1,Ac)
          u(2) = u(2) + N(a)*eq%U%v(2,Ac)

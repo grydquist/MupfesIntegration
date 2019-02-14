@@ -590,7 +590,7 @@
            !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 5D0/ip
+           p%x(3) = 20D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -669,7 +669,7 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
-      !fvel = 0
+      fvel = 0
       !fvel(3) = -3D0!!!!!!!!!!!!!!
       !fvel(1) = fvel(1)+1
       !if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
@@ -970,8 +970,8 @@
 
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
+      g=0D0
       g(3)=10D0
-      !ins => ns%s
 
       tmpprt = prt
       mat => ns%mat
@@ -1040,10 +1040,8 @@
 
       DO a=1,msh%eNoN
             u%OC%v(:,msh%IEN(a,p%eID)) = 
-     3      -0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)
+     3      0!0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)*1000
       END DO
-      !print *, ns%var(1)%OC%v(1,p%eID)
-      !print *, u%v(:,msh%IEN(3,p%eIDo))
 
 !     Check if particle went out of bounds
       p%sbID = sb%id(p%x)
@@ -1073,11 +1071,11 @@
       TYPE(pRawType), POINTER :: p(:)
       TYPE(matType), POINTER :: mat
 !     Particle/fluid Parameters
-      REAL(KIND=8) :: dtp,maxdtp,sbdt(nsd), dp, taup,rhoP,mu
+      REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim
 
 !     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
-            CALL prt%new(1)
+            CALL prt%new(2)
       END IF      
 
       lM => ns%dmn%msh(1)
@@ -1087,6 +1085,7 @@
       rhoP  = prt%mat%rho()
       mu    = ns%mat%mu()
       dp    = prt%mat%D()
+      !ns%var(1)%OC%v(:,:) = 0
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
@@ -1096,7 +1095,7 @@
       END IF
 
 !!!!! get time step broken down to be dictated by either fastest velocity(in terms of sb's traveled), relax time, overall solver dt
-!!! idea: do one more loop through all particles above this one and get time step for each one, then take minimum
+!!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
 !!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it sb so I can only check neighboring sb's
 
 !     Appropriate time step
@@ -1124,10 +1123,11 @@
 
       DO i = 1,prt%n
             CALL prt%adv(i, ns)
-            print *, p(i)%x
+            print *, p(i)%u
 !        Reset if particles have collided
          p(i)%collided = .false.
       END DO
+      print *, 10D0*taup
 
       write(88,*) p(1)%x!, p(2)%x
 
@@ -1142,4 +1142,5 @@
       !!!! Urgent fixes after wall:
       !!!! Add in so it only checks in same searchbox
       !!!! Velocity seems weird. perhaps dt
+      !!!! Mult collisions per step
       !!! Right now doesn't consider collisions after other collisions (wall or particle)

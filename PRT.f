@@ -669,7 +669,7 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
-      fvel = 0
+      !fvel = 0
       !fvel(3) = -3D0!!!!!!!!!!!!!!
       !fvel(1) = fvel(1)+1
       !if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
@@ -1071,7 +1071,7 @@
       TYPE(pRawType), POINTER :: p(:)
       TYPE(matType), POINTER :: mat
 !     Particle/fluid Parameters
-      REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim
+      REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu
 
 !     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
@@ -1127,9 +1127,8 @@
 !        Reset if particles have collided
          p(i)%collided = .false.
       END DO
-      print *, 10D0*taup
 
-      write(88,*) p(1)%x!, p(2)%x
+      write(88,*) p(1)%u, p(2)%u, time
 
       ENDDO
 

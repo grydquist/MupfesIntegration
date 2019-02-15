@@ -590,7 +590,7 @@
            !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 20D0/ip
+           p%x(3) = 29D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -681,9 +681,10 @@
       ! Reynolds Number
       Rep = dp*magud*rhoP/mu
       ! Schiller-Neumann (finite Re) correction
-      fSN = 1D0 + 0.15D0*Rep**0.687D0
+      fSN = 1D0 + 0.15D0*(Rep**0.687D0)
       ! Stokes corrected drag force
       apD = fSN/taup*relvel
+      print *, fSN, Rep,taup,magud,mu,dp,rhoP
 
       END FUNCTION dragPrt
 !--------------------------------------------------------------------

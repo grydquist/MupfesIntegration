@@ -79,9 +79,9 @@ c         PRIVATE
 
       INTEGER iFa, nFa
       REAL(KIND=8) scaleF
-      CHARACTER(LEN=stdL) stmp,typ
+      CHARACTER(LEN=stdL) stmp
       TYPE(fileType) f
-      TYPE(lstType), POINTER :: lPtr, lPBC, lPty
+      TYPE(lstType), POINTER :: lPtr, lPBC
 
       nFa  = lst%srch("Add face")
       io%o = " Number of available faces: "//nFa
@@ -96,18 +96,7 @@ c         PRIVATE
 
       DO iFa=1, nFa
          lPBC => lst%get(stmp,"Add face",iFa)
-         lPtr => lPBC%get(f,"vtk file path")
-         lPty => lPBC%get(typ,"Face type")
-         SELECT CASE (LOWER(TRIM(typ)))
-            CASE ("inlet")
-               msh%fa(iFa)%typ = 1
-            CASE("outlet")
-               msh%fa(iFa)%typ = 2
-            CASE("wall")
-               msh%fa(iFa)%typ = 3
-            CASE DEFAULT
-            io%e = "Select inlet, outlet, or wall Face type"         
-         END SELECT
+         lPtr => lPBC%get(f,"vtk file path")         
          CALL msh%readFace(iFa,stmp,file=f)
       END DO
 

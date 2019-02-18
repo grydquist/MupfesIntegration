@@ -252,11 +252,11 @@
                   CALL eq(iEq)%s%solve()
                   allOk = allOk .AND. eq(iEq)%s%satisfied()
                END DO
+                           !        Grant temp stuff
+            !! check eq ns then call (Select Type)
+            CALL prt%solve1(eq(1)%s)
                IF (allOk) EXIT
             END DO
-            !        Grant temp stuff
-            !! check eq ns then call (Select Type)
-            CALL prt%solve(eq(1)%s)
          ELSE ! Uncoupled case
             DO iEq=1, nEq
                DO WHILE(.NOT.eq(iEq)%s%satisfied()) ! non-linear itr.

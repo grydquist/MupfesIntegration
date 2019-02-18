@@ -2,12 +2,16 @@
       USE INSMOD
 !     FSI is using PRTMOD
       IMPLICIT NONE
-      
-      INTEGER, PARAMETER :: OLD=1, CUR=2, NEW=3, RHS=4, IMP=4
 
-!     Size of the container is extended by this factor if it's
-!     completely filled
-      INTEGER, PARAMETER :: prtExtFac = 2
+!     Is used to initialize equation
+      TYPE(eqSpType), PARAMETER, PRIVATE :: eqSp = eqSpType(
+     1   nVar = 2,
+     2   itgO = 1,
+     3   lsAl = 3,!LS_TYPE_PRT,
+     5   sym  = "PRT")
+
+!     Temporary holder for types of faces
+      INTEGER, ALLOCATABLE :: faTemp(:)
 
 !     Face element boxes
       TYPE facelsboxType
@@ -20,7 +24,6 @@
             INTEGER, ALLOCATABLE :: els(:)
       ! Type of face (1 = wall, 2 = inlet, 3 = outlet)
             INTEGER :: type = 0
-
       END TYPE
 
 !     Individual box
@@ -89,9 +92,7 @@
       END TYPE pRawType
 
 !     Collection of particles
-      TYPE prtType
-!     Created?
-         LOGICAL :: crtd = .FALSE.
+      TYPE, EXTENDS(eqType) :: prtType
 !     Maximum capacity of container
          INTEGER :: maxN = 1024
 !     Current size
@@ -104,22 +105,10 @@
          INTEGER, ALLOCATABLE :: ptr(:)
 !     Data
          TYPE(pRawType), ALLOCATABLE :: dat(:)
-!     Material properties
-         TYPE(matType), POINTER :: mat
 
       CONTAINS
-!     Creates a new prt type
-         PROCEDURE :: new => newPrt
-!     Selects one particle
-         PROCEDURE :: get => getFPrt
-!     Removes a particle
-         PROCEDURE :: rm => rmFPrt
-!     Adds a particle to the structure
-         PROCEDURE :: add => addFPrt
-!     Increases the size of the container 
-         PROCEDURE :: extend => extendPrt
-!     Deletes the structure
-         PROCEDURE :: free => freePrt
+!     Sets up all structure
+         PROCEDURE :: setup => setupPrt
 !     Returns shape function values at the location of a particle
          PROCEDURE :: shapeF => shapeFPrt
 !     Seed the domai with particles
@@ -127,7 +116,7 @@
 !     Finds accelereation on a particle from drag
          PROCEDURE :: drag => dragPrt
 !     Advance all particles one time step
-         PROCEDURE :: solve => solvePrt
+         PROCEDURE :: solve1 => solvePrt
 !     Detects and enacts collisions
          PROCEDURE :: collide => collidePrt
 !     Finds which wall element the partice collides with
@@ -136,14 +125,24 @@
          PROCEDURE :: wall => wallPrt
 !     Advances particle given time step
          PROCEDURE :: adv => advPrt
+
+!     Evaulate the governing equation
+         PROCEDURE :: eval3 => eval3Prt
+         PROCEDURE :: eval2 => eval2Prt
+!     Evaulate the governing equation boundary contribution
+         PROCEDURE :: bEval => bEvalPrt
       END TYPE prtType
+
+      INTERFACE prtType
+            PROCEDURE :: newPrt
+      END INTERFACE prtType
 
       CONTAINS
 
 !####################################################################
 !---------------------------------------------------------------------
-      PURE SUBROUTINE eval3PRT(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
-      CLASS(insType), INTENT(IN) :: eq
+      SUBROUTINE eval3Prt(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
+      CLASS(prtType), INTENT(IN) :: eq
       INTEGER, INTENT(IN) :: eNoN
       INTEGER, INTENT(IN) :: eqN(eNoN)
       REAL(KIND=8), INTENT(IN) :: w, J, N(eNoN), Nx(nsd,eNoN),
@@ -151,11 +150,12 @@
       REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN), 
      2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
 
-      END SUBROUTINE eval3PRT
+
+      END SUBROUTINE eval3Prt
 
 !---------------------------------------------------------------------
-      PURE SUBROUTINE eval2PRT(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
-      CLASS(insType), INTENT(IN) :: eq
+      PURE SUBROUTINE eval2Prt(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
+      CLASS(prtType), INTENT(IN) :: eq
       INTEGER, INTENT(IN) :: eNoN
       INTEGER, INTENT(IN) :: eqN(eNoN)
       REAL(KIND=8), INTENT(IN) :: w, J, N(eNoN), Nx(nsd,eNoN),
@@ -165,132 +165,72 @@
 
       ! this is just a placeholder for now
 
-      END SUBROUTINE eval2PRT
+      END SUBROUTINE eval2Prt
 !---------------------------------------------------------------------
-      SUBROUTINE newPrt(prt, n)
+      PURE SUBROUTINE bEvalPrt(eq, eNoN, eqN, w, N, h, nV, lR, lK)
+      CLASS(prtType), INTENT(IN) :: eq
+      INTEGER, INTENT(IN) :: eNoN, eqN(eNoN)
+      REAL(KIND=8), INTENT(IN) :: w, N(eNoN), h(:), nV(nsd)
+      REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN),
+     2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
+
+
+      END SUBROUTINE bEvalPrt
+!---------------------------------------------------------------------
+      FUNCTION newPrt(dmn, lst) RESULT(eq)
       IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: prt
-      INTEGER, INTENT(IN), OPTIONAL :: n
+      TYPE(dmnType), INTENT(IN) :: dmn
+      TYPE(lstType), INTENT(INOUT) :: lst
+      TYPE(prtType) :: eq
+      TYPE(lstType), POINTER :: lPt1,lPt2,lPBC
+      INTEGER nFa,iFa, typ2
+      CHARACTER(LEN=stdL) stmp,typ1
 
-      INTEGER i
+      CALL eq%new(eqSp, dmn, lst)
+      nFa  = lst%srch("Add BC")
+      ALLOCATE(faTemp(nFa))
+      DO iFa=1, nFa
+            lPBC => lst%get(stmp,"Add BC",iFa)
+            lPt1 => lPBC%get(typ1,"Face type")
+            SELECT CASE (LOWER(TRIM(typ1)))
+            CASE ("inlet")
+               faTemp(iFa) = 1
+               lPt2 =>lPBC%get(typ2,"Number")
+               eq%n = typ2
+            CASE("outlet")
+               faTemp(iFa) = 2
+            CASE("wall")
+               faTemp(iFa) = 3
+            CASE DEFAULT
+            io%e = "Select inlet, outlet, or wall Face type"         
+         END SELECT
 
-      IF (prt%crtd) RETURN
-      open(88,file='pos.txt')
-      IF (PRESENT(n)) prt%maxN = n
-      ALLOCATE(prt%dat(prt%maxN), prt%ptr(prt%maxN))
-      DO i=1, prt%maxN
-         prt%ptr(i) = i
       END DO
-      prt%n = n
-      prt%mat  => FIND_MAT('Particle')
-      CALL prt%seed()
-      prt%crtd = .TRUE.
+
 
       RETURN
-      END SUBROUTINE newPrt
+      END FUNCTION newPrt
+
 !--------------------------------------------------------------------
-      FUNCTION getFPrt(d,i)
-      IMPLICIT NONE
-      CLASS(prtType), TARGET, INTENT(IN) :: d
-      INTEGER, INTENT(IN) :: i
-      TYPE(pRawType), POINTER :: getFPrt
+      SUBROUTINE setupPrt(eq, var)
+      CLASS(prtType), INTENT(INOUT), TARGET :: eq
+      TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
+      INTEGER i
+      !REAL(KIND=8)
 
-      INTEGER ind
+      open(88,file='pos.txt')
 
-      IF (i.GT.d%n .OR. i.LT.1) THEN
-         getFPrt => NULL()
-         RETURN
-      END IF
+      ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n))
+      DO i=1, eq%n
+         eq%ptr(i) = i
+      END DO
+      eq%mat  => FIND_MAT('Particle')
+      eq%var(1) = gVarType(nsd,'Velocity',eq%dmn)
+      eq%var(2) = gVarType(1,'Position',eq%dmn)
 
-      ind = d%ptr(i)
-      getFPrt => d%dat(ind)
+      CALL eq%seed()
 
-      RETURN
-      END FUNCTION getFPrt
-!--------------------------------------------------------------------
-      SUBROUTINE rmFPrt(d,i)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: d
-      INTEGER, INTENT(IN) :: i
-
-      INTEGER ind
-
-      IF (.NOT.d%crtd) STOP "prt not created yet!"
-      IF (i.GT.d%n .OR. i.LT.1) STOP "Out of range index in rmFPrt"
-
-      ind        = d%ptr(i)
-      d%ptr(i)   = d%ptr(d%n)
-      d%ptr(d%n) = ind
-      d%n        = d%n - 1
-
-      RETURN
-      END SUBROUTINE rmFPrt
-!--------------------------------------------------------------------
-      SUBROUTINE addFPrt(d,iDat,ind)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: d
-      TYPE(pRawType), INTENT(IN) :: iDat
-
-      INTEGER, INTENT(IN) :: ind
-
-      IF (.NOT.d%crtd) STOP "prt not created yet!"
-      !IF (d%n .EQ. d%maxN) CALL d%extend()
-
-      !d%n        = d%n + 1
-      !ind        = d%ptr(d%n)
-      d%dat(ind) = iDat
-
-      RETURN
-      END SUBROUTINE addFPrt
-!--------------------------------------------------------------------
-      SUBROUTINE extendPrt(d, maxN)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: d
-      INTEGER, INTENT(IN), OPTIONAL :: maxN
-
-      INTEGER oldMax, newMax
-      TYPE(prtType) dTmp
-
-      IF (.NOT.d%crtd) STOP "prt not created yet!"
-      
-      oldMax = d%maxN
-      newMax = prtExtFac*oldMax
-      IF (PRESENT(maxN)) newMax = maxN
-      IF (newMax .EQ. 0) newMax = prtExtFac
-
-!     At least size must be increased by one
-      IF (newMax .LE. oldMax) RETURN
-
-      CALL dTmp%new(newMax)
-      dTmp%n             = d%n
-      dTmp%dat(1:oldMax) = d%dat
-      dTmp%ptr(1:oldMax) = d%ptr
-
-      CALL d%free()
-      CALL d%new(newMax)
-      d%n             = dTmp%n
-      d%dat(1:oldMax) = dTmp%dat(1:oldMax)
-      d%ptr(1:oldMax) = dTmp%ptr(1:oldMax)
-      CALL dTmp%free()
-
-      RETURN
-      END SUBROUTINE extendPrt
-!--------------------------------------------------------------------
-      PURE SUBROUTINE freePrt(prt)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: prt
-
-      INTEGER iSb
-
-      IF (.NOT.prt%crtd) RETURN
-      
-      prt%crtd = .FALSE.
-      prt%n    = 0
-      DEALLOCATE(prt%dat, prt%ptr)
-      
-
-      RETURN
-      END SUBROUTINE freePrt
+      END SUBROUTINE setupPrt
 !--------------------------------------------------------------------
       SUBROUTINE newSb(sb,msh)
       CLASS(mshType), INTENT(IN) :: msh
@@ -479,7 +419,6 @@
       REAL(KIND=8) :: N(4)
       TYPE(mshType), INTENT(IN) :: msh
 
-      INTEGER, PARAMETER :: TIME_POINT=CUR, iM=1
 
       LOGICAL NOX
       TYPE(pRawType), POINTER :: p
@@ -601,7 +540,7 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT) :: prt
       
-      INTEGER ip, iDis
+      INTEGER ip
 
       TYPE(pRawType) p
 
@@ -612,7 +551,6 @@
            CALL RANDOM_NUMBER(p%x(:))
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
-           !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
            p%x(3) = 20D0/ip
@@ -622,41 +560,7 @@
 
       RETURN
       END SUBROUTINE seedPrt
-!--------------------------------------------------------------------
-      SUBROUTINE PRTTRANS
-      IMPLICIT NONE 
 
-      INTEGER e, ip, a, Ac, eNoN
-      REAL(KIND=8) N(4), up(3)
-      TYPE(prtType) :: prt
-      TYPE(pRawType), POINTER :: p
-      TYPE(mshType) :: msh
-      ! wrong here vv
-      REAL(KIND=8) :: YN(3,1)
- 
-      eNoN = msh%eNoN
-!     Initializing particles
-      CALL prt%new()
-      CALL prt%seed()
-      CALL prt%sb%new(msh)
-
-
-
-      DO ip=1, prt%n
-         p => prt%get(ip)
-         !e = prt%shapeF(ip,msh)
-         up = 0D0
-         DO a=1, eNoN
-            Ac = msh%IEN(a,e)
-            ! Don't know what Yn is
-            up = up + Yn(1:3,Ac)*N(a)
-         END DO
-      END DO
-
-      call prt%free()
-
-      RETURN
-      END SUBROUTINE PRTTRANS
 !--------------------------------------------------------------------
 !     Gets the acceleration due to drag on a single particle
       FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
@@ -1099,14 +1003,15 @@
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim
 
 !     Initialize if haven't yet
-      IF(.NOT.prt%crtd) THEN
-            CALL prt%new(1)
-      END IF      
+!      IF(.NOT.prt%crtd) THEN
+!            prt%new(1)
+!      END IF      
 
       lM => ns%dmn%msh(1)
       p  => prt%dat
       sb => prt%sb
       mat => ns%mat
+      print *,1
       rhoP  = prt%mat%rho()
       mu    = ns%mat%mu()
       dp    = prt%mat%D()

@@ -250,13 +250,13 @@
                allOk = .TRUE.
                DO iEq=1, nEq
                   CALL eq(iEq)%s%solve()
-                  !        Grant temp stuff
-                  !! check eq ns then call (Select Type)
-                  CALL prt%solve(eq(1)%s)
                   allOk = allOk .AND. eq(iEq)%s%satisfied()
                END DO
                IF (allOk) EXIT
             END DO
+            !        Grant temp stuff
+            !! check eq ns then call (Select Type)
+            CALL prt%solve(eq(1)%s)
          ELSE ! Uncoupled case
             DO iEq=1, nEq
                DO WHILE(.NOT.eq(iEq)%s%satisfied()) ! non-linear itr.

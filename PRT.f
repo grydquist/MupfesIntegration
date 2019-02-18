@@ -141,7 +141,32 @@
       CONTAINS
 
 !####################################################################
+!---------------------------------------------------------------------
+      PURE SUBROUTINE eval3PRT(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
+      CLASS(insType), INTENT(IN) :: eq
+      INTEGER, INTENT(IN) :: eNoN
+      INTEGER, INTENT(IN) :: eqN(eNoN)
+      REAL(KIND=8), INTENT(IN) :: w, J, N(eNoN), Nx(nsd,eNoN),
+     2   ks(nsd,nsd)
+      REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN), 
+     2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
 
+      END SUBROUTINE eval3PRT
+
+!---------------------------------------------------------------------
+      PURE SUBROUTINE eval2PRT(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
+      CLASS(insType), INTENT(IN) :: eq
+      INTEGER, INTENT(IN) :: eNoN
+      INTEGER, INTENT(IN) :: eqN(eNoN)
+      REAL(KIND=8), INTENT(IN) :: w, J, N(eNoN), Nx(nsd,eNoN),
+     2   ks(nsd,nsd)
+      REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN), 
+     2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
+
+      ! this is just a placeholder for now
+
+      END SUBROUTINE eval2PRT
+!---------------------------------------------------------------------
       SUBROUTINE newPrt(prt, n)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT) :: prt
@@ -1075,7 +1100,7 @@
 
 !     Initialize if haven't yet
       IF(.NOT.prt%crtd) THEN
-            CALL prt%new(2)
+            CALL prt%new(1)
       END IF      
 
       lM => ns%dmn%msh(1)
@@ -1127,7 +1152,6 @@
 !        Reset if particles have collided
          p(i)%collided = .false.
       END DO
-      print *, 10D0*taup
 
       write(88,*) p(1)%x!, p(2)%x
 

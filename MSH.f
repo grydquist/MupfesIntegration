@@ -106,7 +106,7 @@ c         PRIVATE
             CASE("wall")
                msh%fa(iFa)%typ = 3
             CASE DEFAULT
-         io%e = "Select inlet, outlet, or wall Face type"         
+            io%e = "Select inlet, outlet, or wall Face type"         
          END SELECT
          CALL msh%readFace(iFa,stmp,file=f)
       END DO

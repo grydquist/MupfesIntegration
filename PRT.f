@@ -11,7 +11,7 @@
      5   sym  = "PRT")
 
 !     Temporary holder for types of faces
-      INTEGER, ALLOCATABLE :: faTemp(:)
+      INTEGER, ALLOCATABLE :: faTyp(:)
 
 !     Face element boxes
       TYPE facelsboxType
@@ -22,8 +22,7 @@
       TYPE facelsType
       ! Elements of face
             INTEGER, ALLOCATABLE :: els(:)
-      ! Type of face (1 = wall, 2 = inlet, 3 = outlet)
-            INTEGER :: type = 0
+
       END TYPE
 
 !     Individual box
@@ -105,6 +104,10 @@
          INTEGER, ALLOCATABLE :: ptr(:)
 !     Data
          TYPE(pRawType), ALLOCATABLE :: dat(:)
+!     Velocity, from NS
+         TYPE(varType), POINTER :: Uns => NULL()
+!     Material properties, from NS
+         TYPE(matType), POINTER :: mns => NULL()
 
       CONTAINS
 !     Sets up all structure
@@ -116,7 +119,7 @@
 !     Finds accelereation on a particle from drag
          PROCEDURE :: drag => dragPrt
 !     Advance all particles one time step
-         PROCEDURE :: solve1 => solvePrt
+         PROCEDURE :: solve => solvePrt
 !     Detects and enacts collisions
          PROCEDURE :: collide => collidePrt
 !     Finds which wall element the partice collides with
@@ -177,10 +180,12 @@
 
       END SUBROUTINE bEvalPrt
 !---------------------------------------------------------------------
-      FUNCTION newPrt(dmn, lst) RESULT(eq)
+      FUNCTION newPrt(dmn, lst, Uns,mns) RESULT(eq)
       IMPLICIT NONE
       TYPE(dmnType), INTENT(IN) :: dmn
       TYPE(lstType), INTENT(INOUT) :: lst
+      CLASS(varType), INTENT(IN), OPTIONAL, TARGET :: Uns
+      CLASS(matType), INTENT(IN), OPTIONAL, TARGET :: mns
       TYPE(prtType) :: eq
       TYPE(lstType), POINTER :: lPt1,lPt2,lPBC
       INTEGER nFa,iFa, typ2
@@ -188,23 +193,24 @@
 
       CALL eq%new(eqSp, dmn, lst)
       nFa  = lst%srch("Add BC")
-      ALLOCATE(faTemp(nFa))
+      ALLOCATE(faTyp(nFa))
+      eq%Uns => Uns
+      eq%mns => mns
       DO iFa=1, nFa
             lPBC => lst%get(stmp,"Add BC",iFa)
             lPt1 => lPBC%get(typ1,"Face type")
             SELECT CASE (LOWER(TRIM(typ1)))
             CASE ("inlet")
-               faTemp(iFa) = 1
+               faTyp(iFa) = 1
                lPt2 =>lPBC%get(typ2,"Number")
                eq%n = typ2
             CASE("outlet")
-               faTemp(iFa) = 2
+               faTyp(iFa) = 2
             CASE("wall")
-               faTemp(iFa) = 3
+               faTyp(iFa) = 3
             CASE DEFAULT
             io%e = "Select inlet, outlet, or wall Face type"         
          END SELECT
-
       END DO
 
 
@@ -216,7 +222,6 @@
       CLASS(prtType), INTENT(INOUT), TARGET :: eq
       TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
       INTEGER i
-      !REAL(KIND=8)
 
       open(88,file='pos.txt')
 
@@ -306,8 +311,7 @@
          end do
       end do
 
-!     Make boxes around face elements
-!!!! This part seems right
+!     Make boxes around FACE elements
       do ii = 1,msh%nFa
             ALLOCATE(facels(ii)%elbox(2*nsd,msh%fa(ii)%nEl))
             do jj = 1,msh%fa(ii)%nEl
@@ -367,6 +371,7 @@
             enddo middle
             ALLOCATE(sb%box(ii)%fa(jj)%els(cnt2-1))
             sb%box(ii)%fa(jj)%els = sbelf(1:cnt2-1)
+            !print *, shape(sb%box(ii)%fa(jj)%els)
          enddo outer2
       end do
       sb%crtd = .TRUE.
@@ -563,12 +568,11 @@
 
 !--------------------------------------------------------------------
 !     Gets the acceleration due to drag on a single particle
-      FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
+      FUNCTION dragPrt(prt, ip) RESULT(apd)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER,INTENT(IN) :: ip
-      CLASS(eqType), INTENT(IN) :: ns
       REAL(KIND=8) :: taupo      
-      TYPE(gVarType),POINTER :: u
+      TYPE(VarType),POINTER :: u
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       REAL(KIND=8) :: apd(nsd), fvel(nsd), taup, rhoP, mu,dp
@@ -580,13 +584,12 @@
       p => prt%dat(ip)
       dp = prt%mat%D()
       rhoP = prt%mat%rho()
-      mat => ns%mat
-      msh => ns%dmn%msh(1)
-      u => ns%var(1)
+      msh => prt%dmn%msh(1)
+      u => prt%Uns
 
 !     Fluid parameters
-      rhoF = mat%rho()
-      mu  = mat%mu()
+      rhoF = prt%mns%rho()
+      mu  = prt%mns%mu()
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
@@ -826,7 +829,7 @@
       p%x  = p%xc
       p%remdt = p%remdt - p%ti
 
-      IF (msh%fa(p%faID(1))%typ .EQ. 3) THEN
+      IF (faTyp(p%faID(1)) .EQ. 3) THEN
 !     Hitting wall
 
 !     Get normal/tangent vector
@@ -849,7 +852,7 @@
 !     Exiting domain
       faloop:DO ii = 1,msh%nFa
 !           If inlet...
-            IF (msh%fa(ii)%typ .EQ. 1) THEN
+            IF (faTyp(ii) .EQ. 1) THEN
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
             rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
@@ -879,17 +882,16 @@
       
       END FUNCTION cross2
 !--------------------------------------------------------------------
-      SUBROUTINE advPrt(prt, idp, ns)
+      SUBROUTINE advPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
-      CLASS(eqType), INTENT(IN) :: ns
       !TYPE(insType), POINTER :: ins
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       TYPE(pRawType), POINTER :: p, tp
       TYPE(prtType), TARGET :: tmpprt
       TYPE(sbType), POINTER :: sb
-      TYPE(gVarType),POINTER :: u
+      TYPE(VarType),POINTER :: u
       REAL(KIND=8) rhoF,
      2   mu, mp, g(nsd), dp,
      3   rhoP, N(nsd+1), Ntmp(nsd+1)
@@ -903,16 +905,15 @@
       g(3)=10D0
 
       tmpprt = prt
-      mat => ns%mat
-      msh => ns%dmn%msh(1)
+      msh => prt%dmn%msh(1)
       p  => prt%dat(idp)
       sb => prt%sb
       tp => tmpprt%dat(1)
-      u => ns%var(1)
+      u => prt%uns
       tmpprt%sb = sb
-      rhoF  = ns%mat%rho()
+      rhoF  = prt%mns%rho()
       rhoP  = prt%mat%rho()
-      mu    = ns%mat%mu()
+      mu    = prt%mns%mu()
       dp    = prt%mat%D()
       mp = pi*rhoP/6D0*dp**3D0
 
@@ -932,7 +933,7 @@
       END IF
 
 !     Get drag acceleration
-      apd = prt%drag(idp,ns)
+      apd = prt%drag(idp)
 !     Total acceleration (just drag and buoyancy now)
       apT = apd + g*(1D0 - rhoF/rhoP)
 !     2nd order advance (Heun's Method)
@@ -960,7 +961,7 @@
       END IF
 
 !     Get drag acceleration of predicted particle
-      apdpred = tmpprt%drag(1,ns)
+      apdpred = tmpprt%drag(1)
       !if (idp.eq.2) apdpred = -apdpred!!!!!!!!!!!!!!!
       apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !     Corrector
@@ -968,8 +969,8 @@
       p%x = p%remdt*p%u + p%x
 
       DO a=1,msh%eNoN
-            u%OC%v(:,msh%IEN(a,p%eID)) = 
-     3      0!0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)*1000
+            !u%OC%v(:,msh%IEN(a,p%eID)) = 
+     3      !0!0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)*1000
       END DO
 
 !     Check if particle went out of bounds
@@ -990,75 +991,67 @@
 
       END SUBROUTINE advPrt
 !--------------------------------------------------------------------
-      SUBROUTINE solvePrt(prt, ns)
+      SUBROUTINE solvePrt(eq)
       IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT), TARGET :: prt
-      CLASS(eqType), INTENT(IN) :: ns
+      CLASS(prtType), INTENT(INOUT):: eq
       INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
-      TYPE(sbType), POINTER :: sb
       TYPE(mshType), POINTER :: lM
-      TYPE(pRawType), POINTER :: p(:)
-      TYPE(matType), POINTER :: mat
 !     Particle/fluid Parameters
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim
 
 !     Initialize if haven't yet
-!      IF(.NOT.prt%crtd) THEN
-!            prt%new(1)
+!      IF(.NOT.eq%crtd) THEN
+!            eq%new(1)
 !      END IF      
 
-      lM => ns%dmn%msh(1)
-      p  => prt%dat
-      sb => prt%sb
-      mat => ns%mat
-      print *,1
-      rhoP  = prt%mat%rho()
-      mu    = ns%mat%mu()
-      dp    = prt%mat%D()
+      lM => eq%dmn%msh(1)
+      rhoP  = eq%mat%rho()
+      mu    = eq%mns%mu()
+      dp    = eq%mat%D()
       !ns%var(1)%OC%v(:,:) = 0
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
 
-      IF (.NOT.(sb%crtd)) THEN
-         CALL sb%new(lM)
+      IF (.NOT.(eq%sb%crtd)) THEN
+         CALL eq%sb%new(lM)
       END IF
 
-!!!!! get time step broken down to be dictated by either fastest velocity(in terms of sb's traveled), relax time, overall solver dt
+!!!!! get time step broken down to be dictated by either fastest velocity(in terms of eq%sb's traveled), relax time, overall solver dt
 !!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
-!!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it sb so I can only check neighboring sb's
+!!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it eq%sb so I can only check neighboring eq%sb's
 
 !     Appropriate time step
       dtp = MIN(taup,dt)
 !     Subiterations
       subit = FLOOR(dt/dtp)
       dtp = dt/subit
-      prt%dt = dtp
+      eq%dt = dtp
 
       DO l = 1,subit
 
       !!! Do all collisions first, and only advance to point of collision
       !!! 2nd order: get vel at t impact, use that, but
       !!! Do same for wall collisions if it is out before coll
-      DO i=1,prt%n
-      p(i)%remdt = dtp
+      DO i=1,eq%n
+      eq%dat(i)%remdt = dtp
 !        Collisions
-         DO j=1,prt%n
+         DO j=1,eq%n
 !        Check if the particle collides with any other particles and hasn't collided. Advance if so.
-            IF ((i.ne.j).and.(.not.(p(i)%collided))) THEN
-                CALL prt%collide(i,j,dtp,lM)
+            IF ((i.ne.j).and.(.not.(eq%dat(i)%collided))) THEN
+                CALL eq%collide(i,j,dtp,lM)
             END IF
          ENDDO
       ENDDO
 
-      DO i = 1,prt%n
-            CALL prt%adv(i, ns)
-            print *, p(i)%u
+      DO i = 1,eq%n
+            CALL eq%adv(i)
+            print *, eq%dat(i)%x
 !        Reset if particles have collided
-         p(i)%collided = .false.
+         eq%dat(i)%collided = .false.
       END DO
 
-      write(88,*) p(1)%x!, p(2)%x
+      write(88,*) eq%dat(1)%x!, eq%dat(2)%x
 
       ENDDO
 

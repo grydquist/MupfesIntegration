@@ -86,7 +86,7 @@
             END IF
          CASE('prt')
             IF (.NOT.ASSOCIATED(ns)) io%e = "PRT must come after INS"
-            ALLOCATE(eq(iEq)%s,SOURCE=prtType(dmn,lPtr))
+            ALLOCATE(eq(iEq)%s,SOURCE=prtType(dmn,lPtr,ns%U,ns%mat))
          CASE DEFAULT
             io%e = "Equation type "//TRIM(ctmp)//" is not defined"
          END SELECT

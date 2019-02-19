@@ -92,8 +92,9 @@
       TYPE(matType) mat
       TYPE(lstType), POINTER :: lPtr
       TYPE(vtkType) vtmp
+
 !!    Temporary Grant variable
-      TYPE(prtType) prt
+      TYPE(prtType),POINTER :: prt
 !---------------------------------------------------------------------
 !     Starting the communicator
       cm = cmType()
@@ -254,7 +255,7 @@
                END DO
                            !        Grant temp stuff
             !! check eq ns then call (Select Type)
-            CALL prt%solve1(eq(1)%s)
+            !CALL eq(2)%s%solve()
                IF (allOk) EXIT
             END DO
          ELSE ! Uncoupled case

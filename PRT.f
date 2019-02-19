@@ -1051,9 +1051,15 @@
          eq%dat(i)%collided = .false.
       END DO
 
-      write(88,*) eq%dat(1)%x!, eq%dat(2)%x
+      write(88,*) eq%dat(1)%x, eq%dat(2)%x
 
       ENDDO
+
+!     Updating norm for solution control
+      CALL eq%upNorm(eq%ls%RI%iNorm)
+      
+!     Checking for exceptions
+      CALL io%w%checkException()
 
       RETURN
       END SUBROUTINE solvePrt

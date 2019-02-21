@@ -8,7 +8,7 @@
 #----------------------------------------------------------------
 # General simulation parameters
 Number of spatial dimensions: 3
-Number of time steps: 200
+Number of time steps: 5000
 Time step size: 1e-2
 Continue previous simulation: 0
 Save results in a folder: 1
@@ -21,14 +21,15 @@ Searched file name to trigger stop: STOP_SIM
 Verbose: 1
 Warning: 1
 Debug: 0
+#Coupled solution strategy: 0
 #----------------------------------------------------------------
 Add material: material_name {
    Density:                            1.2  (kg/m^3)        (0-inf)  [DEFAULT: 0.0]
    Dynamic viscosity:                  1e-2  (kg/m/s)        (0-inf)  [DEFAULT: 0.0]
    NS source:                          -1.0 (1/s)                    [DEFAULT: 0.0]
    Body force_x:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
-   Body force_y:                       2.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
-   Body force_z:                       3.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
+   Body force_y:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
+   Body force_z:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
    Conductivity:                       1e3  (kg.m/s^3/K)    (0-inf)  [DEFAULT: 0.0]
    Specific heat:                      1d-3 (m^2/s^2/K)     (0-inf)  [DEFAULT: 0.0]
    Heat source:                        -2.0 (kg/s^3/m)               [DEFAULT: 0.0]
@@ -44,8 +45,8 @@ Add material: Particle      {
    Dynamic viscosity:                  3.4  (kg/m/s)        (0-inf)  [DEFAULT: 0.0]
    NS source:                          -1.0 (1/s)                    [DEFAULT: 0.0]
    Body force_x:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
-   Body force_y:                       2.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
-   Body force_z:                       3.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
+   Body force_y:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
+   Body force_z:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
    Conductivity:                       1e3  (kg.m/s^3/K)    (0-inf)  [DEFAULT: 0.0]
    Specific heat:                      1d-3 (m^2/s^2/K)     (0-inf)  [DEFAULT: 0.0]
    Heat source:                        -2.0 (kg/s^3/m)               [DEFAULT: 0.0]
@@ -61,15 +62,15 @@ Add mesh: msh {
    vtk file path: ../mesh/cylinder/lumen.vtk
    Add face: lumen_inlet {
       vtk file path: ../mesh/cylinder/mesh-surfaces/lumen_inlet.vtk
-	  Face type: inlet
-   }
+  	Face type: inlet
+ }
    Add face: lumen_outlet {
       vtk file path: ../mesh/cylinder/mesh-surfaces/lumen_outlet.vtk
-	  Face type: outlet
-   }
+  Face type: outlet
+ }
    Add face: lumen_wall {
       vtk file path: ../mesh/cylinder/mesh-surfaces/lumen_wall.vtk
-	  Face type: wall
+	Face type: wall
    }
 }
 #----------------------------------------------------------------
@@ -102,8 +103,8 @@ Add equation: INS
    Add BC: lumen_inlet {
       Type: Dirichlet 
       Time dependency: Steady
-      Value: -50
-      Profile: Parabolic
+      Value: 0
+      Profile: Flat
       Zero out perimeter: 1
       Impose flux: 0
    }
@@ -124,3 +125,58 @@ Add equation: INS
       Impose flux: 0
    }
 }
+
+#Add equation: PRT
+#      [ADR/LED/INS/MSH/FSI/SVK/BBO/PRT]
+#{
+#   Min iterations:         1        [1 - inf)         [DEFAULT: 1]
+#   Max iterations:         1       [1 - inf)         [DEFAULT: 10]
+#   Tolerance:              1e-3     [0.0 - inf)       [DEFAULT: 1e64]
+#   Residual dB reduction:  -80      (-inf - 0.0]      [DEFAULT: -60]
+#   Symbol:                 PR       -                 [DEFAULT: EQ DEPENDANT]
+#   Material:               Particle
+#  The following two identifiers are only needed for FSI equation.
+#  One may add an arbitrary number of meshes as the solid domain below. 
+#  The remaining meshes will be considered fluid domain. 
+
+
+# memLS parameters
+# Options and defualts are: 
+# NS     fluid
+# GMRES  heatF, heatS, BBO and FSI 
+# CG     lElas, mesh, and struct 
+# BICG
+
+#   Output: Spatial {
+#      Velocity: t
+#      Pressure: t
+#   }
+#   Add BC: lumen_inlet {
+#      Type: Neumann 
+#      Time dependency: Steady
+#      Value: 0
+#      Profile: Flat
+#      Zero out perimeter: 1
+#      Impose flux: 0
+#      Face type: inlet
+#      Number: 2
+#   }
+#   Add BC: lumen_outlet {
+#      Type: Neumann
+#      Time dependency: Steady
+#      Value: 1
+#      Profile: Flat
+#      Zero out perimeter: 0
+#      Impose flux: 0
+#      Face type: outlet
+#   }
+#   Add BC: lumen_wall {
+#      Type: Neumann 
+#      Time dependency: Steady
+#      Value: 0
+#      Profile: Flat
+#      Zero out perimeter: 1
+#      Impose flux: 0
+#      Face type: wall
+#   }
+#}

@@ -108,6 +108,8 @@
          TYPE(varType), POINTER :: Uns => NULL()
 !     Material properties, from NS
          TYPE(matType), POINTER :: mns => NULL()
+!     Two way coupling force passed to fluid
+         TYPE(varType), POINTER :: twc => NULL()
 
       CONTAINS
 !     Sets up all structure
@@ -180,12 +182,13 @@
 
       END SUBROUTINE bEvalPrt
 !---------------------------------------------------------------------
-      FUNCTION newPrt(dmn, lst, Uns,mns) RESULT(eq)
+      FUNCTION newPrt(dmn, lst, Uns,mns,twc) RESULT(eq)
       IMPLICIT NONE
       TYPE(dmnType), INTENT(IN) :: dmn
       TYPE(lstType), INTENT(INOUT) :: lst
-      CLASS(varType), INTENT(IN), OPTIONAL, TARGET :: Uns
-      CLASS(matType), INTENT(IN), OPTIONAL, TARGET :: mns
+      CLASS(varType), INTENT(IN), TARGET :: Uns
+      CLASS(matType), INTENT(IN), TARGET :: mns
+      CLASS(varType), INTENT(IN), OPTIONAL, TARGET :: twc
       TYPE(prtType) :: eq
       TYPE(lstType), POINTER :: lPt1,lPt2,lPBC
       INTEGER nFa,iFa, typ2
@@ -196,6 +199,7 @@
       ALLOCATE(faTyp(nFa))
       eq%Uns => Uns
       eq%mns => mns
+      IF(PRESENT(twc)) eq%twc => twc
       DO iFa=1, nFa
             lPBC => lst%get(stmp,"Add BC",iFa)
             lPt1 => lPBC%get(typ1,"Face type")
@@ -969,8 +973,8 @@
       p%x = p%remdt*p%u + p%x
 
       DO a=1,msh%eNoN
-            !u%OC%v(:,msh%IEN(a,p%eID)) = 
-     3      !0!0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)*1000
+            prt%twc%v(:,msh%IEN(a,p%eID)) = 
+     2      0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)*1000
       END DO
 
 !     Check if particle went out of bounds
@@ -1004,6 +1008,7 @@
 !            eq%new(1)
 !      END IF      
 
+      eq%twc%v = 0
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
       mu    = eq%mns%mu()

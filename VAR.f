@@ -94,8 +94,6 @@
          TYPE(varType) :: D
 !        The new version of the integrated variables
          TYPE(varType) :: Dn
-!        Outside contributions to variable
-         TYPE(varType) :: OC
       CONTAINS
 !        Deallocating all variables
          PROCEDURE :: free => freeGVar
@@ -451,7 +449,6 @@
       var%Do = varType(dof, name, dmn)
       var%D  = varType(dof, name, dmn)
       var%Dn = varType(dof, name, dmn)
-      var%OC = varType(dof, name, dmn)
 
       RETURN
       END FUNCTION newGVar
@@ -470,7 +467,6 @@
       CALL var%Do%free()
       CALL var%D %free()
       CALL var%Dn%free()
-      CALL var%OC%free()
 
       RETURN
       END SUBROUTINE freeGVar

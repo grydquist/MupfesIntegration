@@ -27,6 +27,8 @@
          TYPE(gVarType), POINTER :: U => NULL()
 !        pressure
          TYPE(gVarType), POINTER :: P => NULL()
+!        Two-way coupling force from particle
+         TYPE(varType),  POINTER ::twc=> NULL()
       CONTAINS
 !        Setups all structure
          PROCEDURE :: setup => setupIns
@@ -87,6 +89,7 @@
       END IF
       eq%U => eq%var(1)
       eq%P => eq%var(2)
+      eq%twc = varType(nsd,'TwoWayCoupling',eq%dmn)
 
       IF (eq%mat%rho() .LE. 0D0)  io%e = "setupIns: rho <= 0"
       IF (eq%mat%mu() .LE. 0D0)   io%e = "setupIns: mu <= 0"
@@ -140,13 +143,11 @@
          px(3) = px(3) + Nx(3,a)*eq%P%s(Ac)
       
          ud(1) = ud(1) + N(a)*(eq%U%A%v(1,Ac)
-     2    + eq%U%OC%v(1,AC))
+     2    + eq%twc%v(1,AC))
          ud(2) = ud(2) + N(a)*(eq%U%A%v(2,Ac)
-     2    + eq%U%OC%v(2,AC))
+     2    + eq%twc%v(2,AC))
          ud(3) = ud(3) + N(a)*(eq%U%A%v(3,Ac)
-     2    + eq%U%OC%v(3,AC))
-
-         !eq%U%OC%v(:,AC) = 0
+     2    + eq%twc%v(3,AC))
 
          u(1) = u(1) + N(a)*eq%U%v(1,Ac)
          u(2) = u(2) + N(a)*eq%U%v(2,Ac)

@@ -25,7 +25,7 @@ Coupled solution strategy: 0
 #----------------------------------------------------------------
 Add material: material_name {
    Density:                            1.2  (kg/m^3)        (0-inf)  [DEFAULT: 0.0]
-   Dynamic viscosity:                  1e-2  (kg/m/s)        (0-inf)  [DEFAULT: 0.0]
+   Dynamic viscosity:                  1e-1  (kg/m/s)        (0-inf)  [DEFAULT: 0.0]
    NS source:                          -1.0 (1/s)                    [DEFAULT: 0.0]
    Body force_x:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
    Body force_y:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
@@ -41,7 +41,7 @@ Add material: material_name {
 }
 
 Add material: Particle      {
-   Density:                            0.1  (kg/m^3)        (0-inf)  [DEFAULT: 0.0]
+   Density:                            100  (kg/m^3)        (0-inf)  [DEFAULT: 0.0]
    Dynamic viscosity:                  3.4  (kg/m/s)        (0-inf)  [DEFAULT: 0.0]
    NS source:                          -1.0 (1/s)                    [DEFAULT: 0.0]
    Body force_x:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
@@ -54,7 +54,7 @@ Add material: Particle      {
    Elasticity modulus:                 1e6  (kg/s^2/m)      (0-inf)  [DEFAULT: 0.0]
    Poisson's ratio:                    0.6  (-)             (0-0.5)  [DEFAULT: 0.0]
    Damping coefficient:                1.2  (kg/m^3/s)               [DEFAULT: 0.0]
-   Diameter:                           1    (m)             (0-inf)  [DEFAULT: 0.0]
+   Diameter:                           0.1    (m)             (0-inf)  [DEFAULT: 0.0]
    Restitution coefficient:            1.0  (-)             [0-1.0]  [DEFAULT: 0.0]
 }
 # Mesh data
@@ -100,7 +100,7 @@ Add equation: INS
    Add BC: lumen_inlet {
       Type: Dirichlet 
       Time dependency: Steady
-      Value: 0
+      Value: 0 
       Profile: Flat
       Zero out perimeter: 1
       Impose flux: 0
@@ -156,7 +156,7 @@ Add equation: PRT
       Zero out perimeter: 1
       Impose flux: 0
       Face type: inlet
-      Number: 2
+      Number: 1
    }
    Add BC: lumen_outlet {
       Type: Neumann

@@ -28,7 +28,7 @@
 !        pressure
          TYPE(gVarType), POINTER :: P => NULL()
 !        Two-way coupling force from particle
-         TYPE(varType),  POINTER ::twc=> NULL()
+         TYPE(varType) ::twc
       CONTAINS
 !        Setups all structure
          PROCEDURE :: setup => setupIns

@@ -80,6 +80,8 @@
          REAL(KIND=8) :: uc(3) = 0D0
 !     Shape functions in current element
          REAL(KIND=8) N(4)
+!     Volume of currecnt element
+         REAL(KIND=8) Vc
 !     Has this particle collided during the current time step?
          LOGICAL :: collided = .FALSE.
 !     Remaining time in timestep after collision
@@ -234,8 +236,8 @@
          eq%ptr(i) = i
       END DO
       eq%mat  => FIND_MAT('Particle')
-      eq%var(1) = gVarType(nsd,'Velocity',eq%dmn)
-      eq%var(2) = gVarType(1,'Position',eq%dmn)
+      eq%var(1) = gVarType(nsd,'PVelocity',eq%dmn)
+      eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
       CALL eq%seed()
 
@@ -533,6 +535,7 @@
       IF (ALL(N.ge.0D0)) then
          p%eID=ind
          p%N = N
+         p%Vc = Jac/6
          EXIT
       END IF
          
@@ -562,7 +565,7 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 20D0/ip
+           p%x(3) = 29D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -605,7 +608,7 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
-      fvel = 0
+      !fvel = 0
       !fvel(3) = -3D0!!!!!!!!!!!!!!
       !fvel(1) = fvel(1)+1
       !if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
@@ -615,7 +618,7 @@
       ! Relative velocity magnitude
       magud = SUM(relvel**2D0)**0.5D0
       ! Reynolds Number
-      Rep = dp*magud*rhoP/mu
+      Rep = dp*magud*rhoF/mu
       ! Schiller-Neumann (finite Re) correction
       fSN = 1D0 + 0.15D0*Rep**0.687D0
       ! Stokes corrected drag force
@@ -860,7 +863,7 @@
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
             rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
-            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi))
+            p%x = (/0D0,0D0,29.5D0/)!msh%x(:,msh%fa(ii)%IEN(1,rndi))
 
             EXIT faloop
             END IF
@@ -906,7 +909,7 @@
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
-      g(3)=10D0
+      g(3)=-10D0
 
       tmpprt = prt
       msh => prt%dmn%msh(1)
@@ -974,7 +977,7 @@
 
       DO a=1,msh%eNoN
             prt%twc%v(:,msh%IEN(a,p%eID)) = 
-     2      0.5*(apd + apdpred)*rhoP/rhoF*p%N(a)*1000
+     2      0.5*(apd + apdpred)*mP/rhoF/p%Vc*p%N(a)
       END DO
 
 !     Check if particle went out of bounds
@@ -1003,17 +1006,14 @@
 !     Particle/fluid Parameters
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim
 
-!     Initialize if haven't yet
-!      IF(.NOT.eq%crtd) THEN
-!            eq%new(1)
-!      END IF      
-
-      eq%twc%v = 0
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
       mu    = eq%mns%mu()
       dp    = eq%mat%D()
-      !ns%var(1)%OC%v(:,:) = 0
+
+!     Reset twc force to zero
+      eq%twc%v(:,:) = 0D0
+      print *, maxval(eq%twc%v)
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0

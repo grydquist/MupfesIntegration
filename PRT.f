@@ -377,7 +377,6 @@
             enddo middle
             ALLOCATE(sb%box(ii)%fa(jj)%els(cnt2-1))
             sb%box(ii)%fa(jj)%els = sbelf(1:cnt2-1)
-            !print *, shape(sb%box(ii)%fa(jj)%els)
          enddo outer2
       end do
       sb%crtd = .TRUE.
@@ -620,7 +619,7 @@
       ! Reynolds Number
       Rep = dp*magud*rhoF/mu
       ! Schiller-Neumann (finite Re) correction
-      fSN = 1D0 + 0.15D0*Rep**0.687D0
+      fSN = 1D0 !+ 0.15D0*Rep**0.687D0
       ! Stokes corrected drag force
       apD = fSN/taup*relvel
 
@@ -903,7 +902,7 @@
      2   mu, mp, g(nsd), dp,
      3   rhoP, N(nsd+1), Ntmp(nsd+1)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
-      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
+      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), mom
       INTEGER :: a
 
 !     Gravity
@@ -916,7 +915,7 @@
       p  => prt%dat(idp)
       sb => prt%sb
       tp => tmpprt%dat(1)
-      u => prt%uns
+      u => prt%Uns
       tmpprt%sb = sb
       rhoF  = prt%mns%rho()
       rhoP  = prt%mat%rho()
@@ -924,9 +923,6 @@
       dp    = prt%mat%D()
       mp = pi*rhoP/6D0*dp**3D0
 
-!     Set last coordinates
-      p%xo = p%x
-      p%uo = p%u
       p%eIDo = p%eID
       p%sbIDo= p%sbID
 
@@ -977,8 +973,17 @@
 
       DO a=1,msh%eNoN
             prt%twc%v(:,msh%IEN(a,p%eID)) = 
-     2      0.5*(apd + apdpred)*mP/rhoF/p%Vc*p%N(a)
+     2      0.5D0*(apd + apdpred)*mP/rhoF/p%Vc
       END DO
+
+      IF (prt%itr .EQ. 0) THEN
+      write(88,*) 0.5D0*(apd(3)+apdpred(3))*mp
+      !print *, 0.5D0*(apd(3)+apdpred(3))*mp
+      !print *, u%v(3,msh%IEN(:,p%eID))
+      mom = prt%dmn%msh(1)%integ(u%v, 3)*rhoF
+      print *, mom
+      END IF
+
 
 !     Check if particle went out of bounds
       p%sbID = sb%id(p%x)
@@ -1013,7 +1018,6 @@
 
 !     Reset twc force to zero
       eq%twc%v(:,:) = 0D0
-      print *, maxval(eq%twc%v)
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
@@ -1021,6 +1025,7 @@
       IF (.NOT.(eq%sb%crtd)) THEN
          CALL eq%sb%new(lM)
       END IF
+
 
 !!!!! get time step broken down to be dictated by either fastest velocity(in terms of eq%sb's traveled), relax time, overall solver dt
 !!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
@@ -1035,29 +1040,40 @@
 
       DO l = 1,subit
 
-      !!! Do all collisions first, and only advance to point of collision
-      !!! 2nd order: get vel at t impact, use that, but
-      !!! Do same for wall collisions if it is out before coll
       DO i=1,eq%n
-      eq%dat(i)%remdt = dtp
+
+!     If it's the first iteration, update last velocity, position
+            IF (eq%itr .EQ. 0) THEN
+            eq%dat(i)%xo = eq%dat(i)%x
+            eq%dat(i)%uo = eq%dat(i)%u
+            ENDIF
+
+!     Set position and velocity to old variables in preparation for iteration with INS
+            eq%dat(i)%x = eq%dat(i)%xo
+            eq%dat(i)%u = eq%dat(i)%uo
+
+!     Set initial advancing time step to solver time step
+            eq%dat(i)%remdt = dtp
 !        Collisions
-         DO j=1,eq%n
+            DO j=1,eq%n
 !        Check if the particle collides with any other particles and hasn't collided. Advance if so.
             IF ((i.ne.j).and.(.not.(eq%dat(i)%collided))) THEN
-                CALL eq%collide(i,j,dtp,lM)
+            CALL eq%collide(i,j,dtp,lM)
             END IF
-         ENDDO
+            ENDDO
       ENDDO
 
       DO i = 1,eq%n
             CALL eq%adv(i)
-            print *, eq%dat(i)%x
-!        Reset if particles have collided
-         eq%dat(i)%collided = .false.
+            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x
+!           Reset if particles have collided
+            eq%dat(i)%collided = .false.
+            
       END DO
 
-      write(88,*) eq%dat(1)%x, eq%dat(2)%x
-
+      IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u, !eq%dat(2)%u
+     2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
+     3 1D0
       ENDDO
 
 !     Updating norm for solution control
@@ -1074,6 +1090,5 @@
 
       !!!! Urgent fixes after wall:
       !!!! Add in so it only checks in same searchbox
-      !!!! Velocity seems weird. perhaps dt
       !!!! Mult collisions per step
       !!! Right now doesn't consider collisions after other collisions (wall or particle)

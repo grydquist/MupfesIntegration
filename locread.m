@@ -1,3 +1,4 @@
+fclose all;
 fileid=fopen('../pos.txt');
 cell=fscanf(fileid,'%f');
 x1=cell(1:6:end);
@@ -40,5 +41,11 @@ end
 % [xc,yc,zc] = cylinder(2);
 % zc(2,:) = 30;
 % surf(xc,yc,zc)
+
+
+t=linspace(0,length(x1)*0.01,length(x2))';
+coeffs = polyfit(t,y2,2);
+xtemp = coeffs(1)*t.^2 + coeffs(2)*t+coeffs(3);
+plot(t,xtemp,t,y2)
 
 fclose all;

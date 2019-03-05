@@ -253,9 +253,6 @@
                   CALL eq(iEq)%s%solve()
                   allOk = allOk .AND. eq(iEq)%s%satisfied()
                END DO
-                           !        Grant temp stuff
-            !! check eq ns then call (Select Type)
-            !CALL eq(2)%s%solve()
                IF (allOk) EXIT
             END DO
          ELSE ! Uncoupled case

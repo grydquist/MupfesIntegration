@@ -21,7 +21,7 @@ Searched file name to trigger stop: STOP_SIM
 Verbose: 1
 Warning: 1
 Debug: 0
-Coupled solution strategy: 0
+Coupled solution strategy: 1
 #----------------------------------------------------------------
 Add material: material_name {
    Density:                            1.2  (kg/m^3)        (0-inf)  [DEFAULT: 0.0]
@@ -106,9 +106,9 @@ Add equation: INS
       Impose flux: 0
    }
    Add BC: lumen_outlet {
-      Type: Neumann
+      Type: Dirichlet
       Time dependency: Steady
-      Value: 1
+      Value: 0
       Profile: Flat
       Zero out perimeter: 0
       Impose flux: 0
@@ -149,7 +149,7 @@ Add equation: PRT
 #      Pressure: t
 #   }
    Add BC: lumen_inlet {
-      Type: Neumann 
+      Type: Dirichlet 
       Time dependency: Steady
       Value: 0
       Profile: Flat

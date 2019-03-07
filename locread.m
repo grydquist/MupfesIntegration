@@ -48,8 +48,8 @@ coeffs = polyfit(t,y2,2);
 xtemp = coeffs(1)*t.^2 + coeffs(2)*t+coeffs(3);
 plot(t,xtemp,t,y2)
 
-g = fittype('a-b*exp(-c*x)');
-f2 = fit(t,y2,g,'StartPoint',[[ones(size(t)), -exp(-t)]\y2; 1]);
-plot(t,f2(t),t,y2)
+%g = fittype('a-b*exp(-c*x)');
+%f2 = fit(t,y2,g,'StartPoint',[[ones(size(t)), -exp(-t)]\y2; 1]);
+%plot(t,f2(t),t,y2)
 
 fclose all;

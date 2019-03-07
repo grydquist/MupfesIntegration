@@ -564,7 +564,7 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 11D0/ip
+           p%x(3) = 29.5D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -622,8 +622,6 @@
       fSN = 1D0 + 0.15D0*Rep**0.687D0
       ! Stokes corrected drag force
       apD = fSN/taup*relvel
-      IF (prt%itr .EQ. 0) 
-     2 print *, apd(3), fvel(3), p%u(3)
 
       END FUNCTION dragPrt
 !--------------------------------------------------------------------
@@ -809,12 +807,12 @@
                   p%faID(1) = ii
                   p%faID(2) = b%fa(ii)%els(jj)
                   p%ti = prntx(3)
-                  EXIT faceloop
+                  RETURN
             ENDIF
 
       ENDDO
       ENDDO faceloop
-      !io%e = "Wrong searchbox"
+      io%e = "Wrong searchbox"
       
       END SUBROUTINE findwlPrt
 !--------------------------------------------------------------------
@@ -838,12 +836,11 @@
 !     Get first order drag
       apd = prt%drag(idp)
       p%u = p%u + apd*p%ti
-      print *, apd(3)
 
 !     Send drag to fluid
       DO jj=1,msh%eNoN
       prt%twc%v(:,prt%dmn%msh(1)%IEN(jj,p%eID)) = 
-     2      apd*mP/rhoF
+     2      apd*mP/rhoF*p%N(a)*4
       END DO
 
 !     Advance to collision location
@@ -873,7 +870,7 @@
 
 !     Exiting domain
       faloop:DO ii = 1,msh%nFa
-!           If inlet...
+!           Search for inlet to put particle back into
             IF (faTyp(ii) .EQ. 1) THEN
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
@@ -907,7 +904,6 @@
       SUBROUTINE advPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
-      !TYPE(insType), POINTER :: ins
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       TYPE(pRawType), POINTER :: p, tp
@@ -995,7 +991,7 @@
 !     Send drag to fluid
       DO a=1,msh%eNoN
             prt%twc%v(:,msh%IEN(a,p%eID)) = 
-     2      0.5D0*(apd + apdpred)*mP/rhoF
+     2      0.5D0*(apd + apdpred)*mP/rhoF*p%N(a)*4
       END DO
 
 !     Check if particle went out of bounds
@@ -1035,10 +1031,10 @@
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
 
+!     Create searchbox ovrelay
       IF (.NOT.(eq%sb%crtd)) THEN
          CALL eq%sb%new(lM)
       END IF
-
 
 !!!!! get time step broken down to be dictated by either fastest velocity(in terms of eq%sb's traveled), relax time, overall solver dt
 !!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
@@ -1057,8 +1053,8 @@
 
 !     If it's the first iteration, update last velocity, position
             IF (eq%itr .EQ. 0) THEN
-            eq%dat(i)%xo = eq%dat(i)%x
-            eq%dat(i)%uo = eq%dat(i)%u
+                  eq%dat(i)%xo = eq%dat(i)%x
+                  eq%dat(i)%uo = eq%dat(i)%u
             ENDIF
 
 !     Set position and velocity to old variables in preparation for iteration with INS
@@ -1067,18 +1063,19 @@
 
 !     Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
-!        Collisions
+!     Collisions
             DO j=1,eq%n
-!        Check if the particle collides with any other particles and hasn't collided. Advance if so.
+!     Check if the particle collides with any other particles and hasn't collided. Advance to collision location
             IF ((i.ne.j).and.(.not.(eq%dat(i)%collided))) THEN
-            CALL eq%collide(i,j,dtp,lM)
+                  CALL eq%collide(i,j,dtp,lM)
             END IF
             ENDDO
       ENDDO
 
       DO i = 1,eq%n
             CALL eq%adv(i)
-            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x
+            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
+     2            eq%dat(i)%u(3)       
 !           Reset if particles have collided
             eq%dat(i)%collided = .false.
       END DO

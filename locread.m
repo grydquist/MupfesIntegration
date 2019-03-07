@@ -20,7 +20,7 @@ y=y/2;
 z=z/2;
 
 hold off
-for i=1:length(cell)/6
+for i=1:1%length(cell)/6
   axis([-2,2,-2,2,0,30])
   pbaspect([4,4,30])
   %view(90,0)
@@ -42,10 +42,14 @@ end
 % zc(2,:) = 30;
 % surf(xc,yc,zc)
 
-
+hold off
 t=linspace(0,length(x1)*0.01,length(x2))';
 coeffs = polyfit(t,y2,2);
 xtemp = coeffs(1)*t.^2 + coeffs(2)*t+coeffs(3);
 plot(t,xtemp,t,y2)
+
+g = fittype('a-b*exp(-c*x)');
+f2 = fit(t,y2,g,'StartPoint',[[ones(size(t)), -exp(-t)]\y2; 1]);
+plot(t,f2(t),t,y2)
 
 fclose all;

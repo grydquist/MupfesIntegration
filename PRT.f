@@ -564,7 +564,7 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 29D0/ip
+           p%x(3) = 11D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -619,9 +619,11 @@
       ! Reynolds Number
       Rep = dp*magud*rhoF/mu
       ! Schiller-Neumann (finite Re) correction
-      fSN = 1D0 !+ 0.15D0*Rep**0.687D0
+      fSN = 1D0 + 0.15D0*Rep**0.687D0
       ! Stokes corrected drag force
       apD = fSN/taup*relvel
+      IF (prt%itr .EQ. 0) 
+     2 print *, apd(3), fvel(3), p%u(3)
 
       END FUNCTION dragPrt
 !--------------------------------------------------------------------
@@ -821,14 +823,28 @@
       INTEGER, INTENT(IN) :: idp
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
-      INTEGER :: ii, rndi
+      INTEGER :: ii, rndi, jj 
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
-     2 a(nsd), b(nsd), vpar, vperp, temp(nsd), rnd
+     2 a(nsd), b(nsd), vpar, vperp, temp(nsd), rnd,
+     3 apd(nsd), mp, rhoF
 
       p   =>prt%dat(idp)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
       k   = prt%mat%krest()
+      rhoF  = prt%mns%rho()
+      mp = pi*rho/6D0*dp**3D0
+
+!     Get first order drag
+      apd = prt%drag(idp)
+      p%u = p%u + apd*p%ti
+      print *, apd(3)
+
+!     Send drag to fluid
+      DO jj=1,msh%eNoN
+      prt%twc%v(:,prt%dmn%msh(1)%IEN(jj,p%eID)) = 
+     2      apd*mP/rhoF
+      END DO
 
 !     Advance to collision location
       p%xc = p%u*p%ti + p%x
@@ -953,6 +969,11 @@
 !     Get shape functions/element of prediction
       Ntmp = tmpprt%shapeF(1, msh)
 
+      IF (prt%itr .EQ. 0) THEN
+      write(88,*) 0.5D0*(apd(3)+apdpred(3))*mp
+      mom =prt%dmn%msh(1)%integ(u%v, 3) !!!!!!!!! take out eventually
+      END IF
+
 !     Check if predictor OOB
       IF (ANY(Ntmp.lt.0)) THEN
 !     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
@@ -971,19 +992,11 @@
       p%u = p%u + 0.5D0*p%remdt*(apT+apTpred)
       p%x = p%remdt*p%u + p%x
 
+!     Send drag to fluid
       DO a=1,msh%eNoN
             prt%twc%v(:,msh%IEN(a,p%eID)) = 
-     2      0.5D0*(apd + apdpred)*mP/rhoF/p%Vc
+     2      0.5D0*(apd + apdpred)*mP/rhoF
       END DO
-
-      IF (prt%itr .EQ. 0) THEN
-      write(88,*) 0.5D0*(apd(3)+apdpred(3))*mp
-      !print *, 0.5D0*(apd(3)+apdpred(3))*mp
-      !print *, u%v(3,msh%IEN(:,p%eID))
-      mom = prt%dmn%msh(1)%integ(u%v, 3)*rhoF
-      print *, mom
-      END IF
-
 
 !     Check if particle went out of bounds
       p%sbID = sb%id(p%x)
@@ -1068,12 +1081,13 @@
             IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x
 !           Reset if particles have collided
             eq%dat(i)%collided = .false.
-            
       END DO
 
       IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u, !eq%dat(2)%u
      2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
-     3 1D0
+     3  (-eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
+     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
+     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0
       ENDDO
 
 !     Updating norm for solution control

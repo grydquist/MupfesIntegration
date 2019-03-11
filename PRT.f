@@ -108,6 +108,8 @@
          TYPE(pRawType), ALLOCATABLE :: dat(:)
 !     Velocity, from NS
          TYPE(varType), POINTER :: Uns => NULL()
+!     Pressure, from NS
+         TYPE(varType), POINTER :: Pns => NULL()
 !     Material properties, from NS
          TYPE(matType), POINTER :: mns => NULL()
 !     Two way coupling force passed to fluid
@@ -201,6 +203,7 @@
       ALLOCATE(faTyp(nFa))
       eq%Uns => Uns
       eq%mns => mns
+      eq%Pns => Pns
       IF(PRESENT(twc)) eq%twc => twc
       DO iFa=1, nFa
             lPBC => lst%get(stmp,"Add BC",iFa)

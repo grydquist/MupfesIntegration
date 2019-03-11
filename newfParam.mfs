@@ -8,7 +8,7 @@
 #----------------------------------------------------------------
 # General simulation parameters
 Number of spatial dimensions: 3
-Number of time steps: 5000
+Number of time steps: 2000
 Time step size: 1e-2
 Continue previous simulation: 0
 Save results in a folder: 1
@@ -26,7 +26,7 @@ Coupled solution strategy: 1
 Add material: material_name {
    Density:                            1.2  (kg/m^3)        (0-inf)  [DEFAULT: 0.0]
    Dynamic viscosity:                  1e-1  (kg/m/s)        (0-inf)  [DEFAULT: 0.0]
-   NS source:                          -1.0 (1/s)                    [DEFAULT: 0.0]
+   NS source:                          0 (1/s)                       [DEFAULT: 0.0]
    Body force_x:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
    Body force_y:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
    Body force_z:                       0.0  (kg/m^2/s^2)             [DEFAULT: 0.0]
@@ -114,7 +114,7 @@ Add equation: INS
       Impose flux: 0
    }
    Add BC: lumen_wall {
-      Type: Dirichlet 
+      Type: Neumann 
       Time dependency: Steady
       Value: 0
       Profile: Flat

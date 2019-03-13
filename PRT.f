@@ -186,11 +186,12 @@
 
       END SUBROUTINE bEvalPrt
 !---------------------------------------------------------------------
-      FUNCTION newPrt(dmn, lst, Uns,mns,twc) RESULT(eq)
+      FUNCTION newPrt(dmn, lst, Uns,mns,twc,Pns) RESULT(eq)
       IMPLICIT NONE
       TYPE(dmnType), INTENT(IN) :: dmn
       TYPE(lstType), INTENT(INOUT) :: lst
       CLASS(varType), INTENT(IN), TARGET :: Uns
+      CLASS(varType), INTENT(IN), TARGET :: Pns
       CLASS(matType), INTENT(IN), TARGET :: mns
       CLASS(varType), INTENT(IN), OPTIONAL, TARGET :: twc
       TYPE(prtType) :: eq
@@ -1021,7 +1022,8 @@
       INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
       TYPE(mshType), POINTER :: lM
 !     Particle/fluid Parameters
-      REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim
+      REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
+     2 P1, P2 
 
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
@@ -1082,12 +1084,18 @@
 !           Reset if particles have collided
             eq%dat(i)%collided = .false.
       END DO
+            
+      P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
+      P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
+      IF ((eq%dat(1)%x(3) .lt. 0.5)
+     2 .or.(eq%dat(1)%x(3) .gt. 29))print *, P1,P2
 
-      IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u, !eq%dat(2)%u
+      IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u(3), !eq%dat(2)%u
      2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
      3  (-eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
      4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
-     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0
+     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
+     6  P1,P2
       ENDDO
 
 !     Updating norm for solution control

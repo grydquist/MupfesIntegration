@@ -48,7 +48,8 @@ coeffs = polyfit(t,z1,2);
 xtemp = coeffs(1)*t.^2 + coeffs(2)*t+coeffs(3);
 plot(t,xtemp,t,z1)
 %plot((z1(2:end)-z1(1:end-1))/-0.01);hold on; plot(x1(2:end))
-%plot((z1(2:end)-z1(1:end-1))/-0.01+z2(2:end)-y2(1:end-1));hold on; plot(x1(2:end))
+plot((z1(2:end)-z1(1:end-1))/-0.1+z2(2:end)-y2(1:end-1),'k');hold on; plot(x1)
+%plot(((z1(2:end)-z1(1:end-1))/-0.01+z2(2:end)-y2(1:end-1))./x1(2:end),'k');
 
 %g = fittype('a-b*exp(-c*x)');
 %f2 = fit(t,y2,g,'StartPoint',[[ones(size(t)), -exp(-t)]\y2; 1]);

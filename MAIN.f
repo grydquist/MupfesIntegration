@@ -92,9 +92,6 @@
       TYPE(matType) mat
       TYPE(lstType), POINTER :: lPtr
       TYPE(vtkType) vtmp
-
-!!    Temporary Grant variable
-      TYPE(prtType),POINTER :: prt
 !---------------------------------------------------------------------
 !     Starting the communicator
       cm = cmType()

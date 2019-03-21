@@ -22,7 +22,6 @@
       TYPE facelsType
       ! Elements of face
             INTEGER, ALLOCATABLE :: els(:)
-
       END TYPE
 
 !     Individual box
@@ -114,6 +113,8 @@
          TYPE(matType), POINTER :: mns => NULL()
 !     Two way coupling force passed to fluid
          TYPE(varType), POINTER :: twc => NULL()
+!     Weighted volume
+         REAL(KIND=8), ALLOCATABLE :: wV(:)
 
       CONTAINS
 !     Sets up all structure
@@ -231,17 +232,33 @@
       SUBROUTINE setupPrt(eq, var)
       CLASS(prtType), INTENT(INOUT), TARGET :: eq
       TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
-      INTEGER i
+      INTEGER i,a, Ac,cnt
+      REAL(KIND=8), ALLOCATABLE :: volt(:)
 
-      open(88,file='pos.txt')
+      open(88,file='pos.txt') !! For data output
 
-      ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n))
+      ALLOCATE(volt(eq%dmn%msh(1)%eNon))
+      ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n),eq%wV(eq%dmn%msh(1)%nNo))
+
+      eq%wV = 0D0
+      cnt =0
       DO i=1, eq%n
          eq%ptr(i) = i
       END DO
       eq%mat  => FIND_MAT('Particle')
       eq%var(1) = gVarType(nsd,'PVelocity',eq%dmn)
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
+
+!     Assuming everything is in first mesh for searchboxes !!!!!!
+      CALL eq%sb%new(eq%dmn%msh(1))
+!     Getting volumes of influence for each node
+      DO i = 1,eq%dmn%msh(1)%nEl
+            volt = effvolel(eq%dmn%msh(1),i)
+            DO a = 1,eq%dmn%msh(1)%eNoN
+                  Ac = eq%dmn%msh(1)%IEN(a,i)
+                  eq%wV(Ac) = eq%wV(Ac) + volt(a)
+            END DO
+      END DO
 
       CALL eq%seed()
 
@@ -455,8 +472,8 @@
       Nxi(2,4) = -1D0
       Nxi(3,4) = -1D0
 
-      IF (msh%eType.NE.eType_TET) 
-     2   io%e = "shapeFPrt only defined for tet elements"
+    !  IF (msh%eType.NE.eType_TET) 
+    ! 2   io%e = "shapeFPrt only defined for tet elements"
 
       p => prt%dat(ip)
       b => prt%sb%box(p%sbID(1))
@@ -568,7 +585,7 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 29.5D0/ip
+           p%x(3) = 100.5D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -767,7 +784,7 @@
 
             xXi = 0D0
       !     Setting up matrix for inversion
-            DO a=1, msh%eNoN-1
+            DO a=1, msh%eNoN-1 !! Only for tets
                   xXi(:,1) = xXi(:,1) +
      2        msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))*Nxi(1,a)
                   xXi(:,2) = xXi(:,2) +
@@ -825,7 +842,7 @@
       INTEGER, INTENT(IN) :: idp
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
-      INTEGER :: ii, rndi, jj 
+      INTEGER :: ii, rndi, jj, Ac
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
      2 a(nsd), b(nsd), vpar, vperp, temp(nsd), rnd,
      3 apd(nsd), mp, rhoF
@@ -843,8 +860,9 @@
 
 !     Send drag to fluid
       DO jj=1,msh%eNoN
-      prt%twc%v(:,prt%dmn%msh(1)%IEN(jj,p%eID)) = 
-     2      apd*mP/rhoF*p%N(a)*4
+            Ac = prt%dmn%msh(1)%IEN(jj,p%eID)
+            prt%twc%v(:,Ac) = 
+     2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
 
 !     Advance to collision location
@@ -890,6 +908,37 @@
       END SUBROUTINE wallPrt
 
 !--------------------------------------------------------------------
+      ! Finds the volume influenced by moving one node in one element,
+      ! for all nodes in that element
+      FUNCTION effvolel(msh,e) RESULT(effvol)
+      IMPLICIT NONE
+      TYPE(mshtype), INTENT(IN) :: msh
+      INTEGER, INTENT(IN) :: e
+      REAL(KIND=8) :: effvol(msh%eNoN)
+      INTEGER g,a, Ac(msh%eNoN)
+      REAL(KIND=8) :: Jac, x(nsd, msh%eNoN), Nx(nsd,msh%eNoN)
+
+      effvol = 0D0
+
+!     Indices and coordinates of nodes
+      DO a = 1,msh%eNoN
+            Ac(a) = msh%IEN(a,e)
+      END DO
+
+      x = msh%x(:,Ac)      
+
+      DO g = 1, msh%nG
+!     First, we want the Jacobian, which (if shpfns are linear) is the same for all gauss points
+      IF (g.EQ.1 .OR. .NOT.msh%lShpF) CALL msh%dNdx(g,x,Nx,Jac)
+            DO a = 1, msh%eNoN
+!           Numerically integrate to get volume of each node
+                  effvol(a) = effvol(a) + msh%N(a,g)*Jac*msh%w(g)
+            END DO
+      END DO
+
+      END FUNCTION
+
+!--------------------------------------------------------------------
       ! I use cross products a couple times above and didn't want to integrate the util one
       ! Also normalizes to unit vector
       FUNCTION cross2(v1,v2) RESULT(cross)
@@ -918,8 +967,8 @@
      2   mu, mp, g(nsd), dp,
      3   rhoP, N(nsd+1), Ntmp(nsd+1)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
-      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), mom
-      INTEGER :: a
+      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom
+      INTEGER :: a, Ac
 
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
@@ -969,11 +1018,6 @@
 !     Get shape functions/element of prediction
       Ntmp = tmpprt%shapeF(1, msh)
 
-      IF (prt%itr .EQ. 0) THEN
-      write(88,*) 0.5D0*(apd(3)+apdpred(3))*mp
-      mom =prt%dmn%msh(1)%integ(u%v, 3) !!!!!!!!! take out eventually
-      END IF
-
 !     Check if predictor OOB
       IF (ANY(Ntmp.lt.0)) THEN
 !     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
@@ -994,9 +1038,18 @@
 
 !     Send drag to fluid
       DO a=1,msh%eNoN
-            prt%twc%v(:,msh%IEN(a,p%eID)) = 
-     2      0.5D0*(apd + apdpred)*mP/rhoF*p%N(a)*4
+            Ac = msh%IEN(a,p%eID)
+            prt%twc%v(:,Ac) = 
+     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
+      IF (prt%itr .EQ. 0) THEN
+            tmpwr = 0.5*(apd+apdpred)
+            write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
+            print *, sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
+            mom =prt%dmn%msh(1)%integ(u%v, 3)
+            print *, mom
+            !call sleep(1)
+      END IF
 
 !     Check if particle went out of bounds
       p%sbID = sb%id(p%x)
@@ -1023,7 +1076,7 @@
       TYPE(mshType), POINTER :: lM
 !     Particle/fluid Parameters
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
-     2 P1, P2 
+     2 P1, P2
 
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
@@ -1035,11 +1088,6 @@
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
-
-!     Create searchbox ovrelay
-      IF (.NOT.(eq%sb%crtd)) THEN
-         CALL eq%sb%new(lM)
-      END IF
 
 !!!!! get time step broken down to be dictated by either fastest velocity(in terms of eq%sb's traveled), relax time, overall solver dt
 !!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
@@ -1087,12 +1135,10 @@
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
-      IF ((eq%dat(1)%x(3) .lt. 0.5)
-     2 .or.(eq%dat(1)%x(3) .gt. 29))print *, P1,P2
 
       IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u(3), !eq%dat(2)%u
      2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
-     3  (-eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
+     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
      4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
      5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
      6  P1,P2

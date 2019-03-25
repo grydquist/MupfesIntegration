@@ -78,9 +78,7 @@
 !     Velocity at collision
          REAL(KIND=8) :: uc(3) = 0D0
 !     Shape functions in current element
-         REAL(KIND=8) N(4)
-!     Volume of currecnt element
-         REAL(KIND=8) Vc
+         REAL(KIND=8), ALLOCATABLE :: N(:)
 !     Has this particle collided during the current time step?
          LOGICAL :: collided = .FALSE.
 !     Remaining time in timestep after collision
@@ -244,6 +242,7 @@
       cnt =0
       DO i=1, eq%n
          eq%ptr(i) = i
+         ALLOCATE(eq%dat(i)%N(eq%dmn%msh(1)%eNoN))
       END DO
       eq%mat  => FIND_MAT('Particle')
       eq%var(1) = gVarType(nsd,'PVelocity',eq%dmn)
@@ -411,9 +410,8 @@
       CLASS(sbType), INTENT(IN) :: sb
       REAL(KIND=8), INTENT(IN) :: x(nsd)
       INTEGER iSb(2**nsd)
-
       REAL(KIND=8) :: xzero(nsd)
-      INTEGER :: xsteps(nsd), i(nsd)
+      INTEGER :: xsteps(nsd)
 
       ! Set domain back to zero
       xzero(1) = x(1) - minval(sb%box(:)%dim(1))
@@ -447,33 +445,11 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(IN),TARGET :: prt
       INTEGER, INTENT(IN) :: ip
-      REAL(KIND=8) :: N(4)
       TYPE(mshType), INTENT(IN) :: msh
-
-
-      LOGICAL NOX
+      REAL(KIND=8) :: N(msh%eNoN)
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
-      INTEGER :: ii,cnt,a, ind
-      REAL(KIND=8) :: Jac,xXi(nsd,nsd), xiX(nsd,nsd),Nx(nsd,nsd+1),
-     2 Nxi(nsd,nsd+1),prntx(nsd)
-      cnt=1
-
-      Nxi(1,1) =  1D0
-      Nxi(2,1) =  0D0
-      Nxi(3,1) =  0D0
-      Nxi(1,2) =  0D0
-      Nxi(2,2) =  1D0
-      Nxi(3,2) =  0D0
-      Nxi(1,3) =  0D0
-      Nxi(2,3) =  0D0
-      Nxi(3,3) =  1D0
-      Nxi(1,4) = -1D0
-      Nxi(2,4) = -1D0
-      Nxi(3,4) = -1D0
-
-    !  IF (msh%eType.NE.eType_TET) 
-    ! 2   io%e = "shapeFPrt only defined for tet elements"
+      INTEGER :: ii, ind
 
       p => prt%dat(ip)
       b => prt%sb%box(p%sbID(1))
@@ -482,88 +458,20 @@
 
             ind = b%els(ii-1)
             if (ii.eq.1) ind = p%eIDo
-            xXi = 0D0
 
-      IF (nsd .EQ. 2) THEN
-      !
-      ! 2D not done
-      !
-!         DO a=1, eNoN
-!            xXi(:,1) = xXi(:,1) + x(:,a)*Nxi(1,a)
-!            xXi(:,2) = xXi(:,2) + x(:,a)*Nxi(2,a)
-!         END DO
-!
-!         Jac = xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1)
-!
-!         xiX(1,1) =  xXi(2,2)/Jac
-!         xiX(1,2) = -xXi(1,2)/Jac
-!         xiX(2,1) = -xXi(2,1)/Jac
-!         xiX(2,2) =  xXi(1,1)/Jac
-!
-!         
-!         DO a=1, eNoN
-!            Nx(1,a) = Nx(1,a)+ Nxi(1,a)*xiX(1,1) + Nxi(2,a)*xiX(2,1)
-!            Nx(2,a) = Nx(2,a)+ Nxi(1,a)*xiX(1,2) + Nxi(2,a)*xiX(2,2)
-!         END DO
-!
-      ELSE
-      ! 3D case
+            N = msh%nAtx(p%x,msh%x(:,msh%IEN(:,ind)))
 
-      ! Setting up matrix to be inverted
-         DO a=1, msh%eNoN
-            xXi(:,1) = xXi(:,1) +
-     2        msh%x(:,msh%IEN(a,ind))*Nxi(1,a)
-            xXi(:,2) = xXi(:,2) +
-     2        msh%x(:,msh%IEN(a,ind))*Nxi(2,a)
-            xXi(:,3) = xXi(:,3) + 
-     2        msh%x(:,msh%IEN(a,ind))*Nxi(3,a)
-         END DO
-         
-      ! Inverting matrix
-         Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
-     2       + xXi(1,2)*xXi(2,3)*xXi(3,1)
-     3       + xXi(1,3)*xXi(2,1)*xXi(3,2)
-     4       - xXi(1,1)*xXi(2,3)*xXi(3,2)
-     5       - xXi(1,2)*xXi(2,1)*xXi(3,3)
-     6       - xXi(1,3)*xXi(2,2)*xXi(3,1)
-
-         xiX(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))/Jac
-         xiX(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))/Jac
-         xiX(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))/Jac
-         xiX(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))/Jac
-         xiX(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))/Jac
-         xiX(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))/Jac
-         xiX(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))/Jac
-         xiX(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))/Jac
-         xiX(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))/Jac
-         
-      ! Finding particle coordinates in parent coordinate system
-         DO a=1, nsd
-            prntx(a) = xiX(a,1)*(p%x(1)- msh%x(1,msh%IEN(4,ind)))
-     2               + xiX(a,2)*(p%x(2)- msh%x(2,msh%IEN(4,ind)))
-     3               + xiX(a,3)*(p%x(3)- msh%x(3,msh%IEN(4,ind)))
-         END DO
-      END IF
-
-      ! Finding shape function values at particle coordinates
-      N(1) = prntx(1)
-      N(2) = prntx(2)
-      N(3) = prntx(3)
-      N(4) = 1 - prntx(1) - prntx(2) - prntx(3)
-
-      ! Checking if all shape functions are positive
-      IF (ALL(N.ge.0D0)) then
-         p%eID=ind
-         p%N = N
-         p%Vc = Jac/6
-         EXIT
-      END IF
+            ! Checking if all shape functions are positive
+            IF (ALL(N.ge.0D0)) then
+                  p%eID=ind
+                  p%N = N
+                  EXIT
+            END IF
          
       end do
 
       ! If it loops through everything and doesn't yield a positive shape function,
       ! the particle is outside the domain
-      !if (p%eID.eq.0) io%e = 'outside domain'
 
       RETURN
       END FUNCTION shapeFPrt
@@ -585,7 +493,7 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 100.5D0/ip
+           p%x(3) = 29.5D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -764,70 +672,154 @@
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
-      REAL(KIND=8) :: Jac, xXi(nsd,nsd), xiX(nsd,nsd), Nxi(nsd,nsd)
-      REAL(KIND=8) :: prntx(nsd), N(nsd)
+      REAL(KIND=8) :: Jac, xXi(nsd,nsd), Am(nsd,nsd), x1(nsd), tc
+      REAL(KIND=8) :: N(msh%fa(1)%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
       INTEGER :: ii, jj, a
+      REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac
 
       p => prt%dat(idp)
       b => prt%sb%box(p%sbID(1))
 
-      Nxi(1,1) =  1D0
-      Nxi(2,1) =  0D0
-      Nxi(1,2) =  0D0
-      Nxi(2,2) =  1D0
-      Nxi(1,3) = -1D0
-      Nxi(2,3) = -1D0
       p%faID = 0
 
       faceloop: DO ii=1,msh%nFa
       DO jj=1,size(b%fa(ii)%els)
 
             xXi = 0D0
+            Bm = 0D0
+            x1 = 0D0
       !     Setting up matrix for inversion
-            DO a=1, msh%eNoN-1 !! Only for tets
+            DO a=1, msh%fa(ii)%eNoN !! Only for tets
                   xXi(:,1) = xXi(:,1) +
-     2        msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))*Nxi(1,a)
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          *msh%fa(ii)%Nx(1,a,1)
                   xXi(:,2) = xXi(:,2) +
-     2        msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))*Nxi(2,a)
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          *msh%fa(ii)%Nx(2,a,1)
+                  xXi(:,3) = xXi(:,3) +
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          *msh%fa(ii)%Nx(3,a,1)
+!           Location of Gauss point (for Bm)
+                  x1 = x1 + msh%fa(ii)%N(a,1)*
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
             ENDDO
-            xXi(:,3) = -p%u
 
-                  ! Inverting matrix
             Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
-     2       + xXi(1,2)*xXi(2,3)*xXi(3,1)
-     3       + xXi(1,3)*xXi(2,1)*xXi(3,2)
-     4       - xXi(1,1)*xXi(2,3)*xXi(3,2)
-     5       - xXi(1,2)*xXi(2,1)*xXi(3,3)
-     6       - xXi(1,3)*xXi(2,2)*xXi(3,1)
-    
-            xiX(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))/Jac
-            xiX(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))/Jac
-            xiX(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))/Jac
-            xiX(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))/Jac
-            xiX(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))/Jac
-            xiX(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))/Jac
-            xiX(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))/Jac
-            xiX(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))/Jac
-            xiX(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))/Jac
+     2      + xXi(1,2)*xXi(2,3)*xXi(3,1)
+     3      + xXi(1,3)*xXi(2,1)*xXi(3,2)
+     4      - xXi(1,1)*xXi(2,3)*xXi(3,2)
+     5      - xXi(1,2)*xXi(2,1)*xXi(3,3)
+     6      - xXi(1,3)*xXi(2,2)*xXi(3,1)
+            iJac = 1D0/Jac
 
-            DO a=1, nsd
-            prntx(a) = xiX(a,1)*(p%x(1) -
-     2       msh%x(1,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
-     3               + xiX(a,2)*(p%x(2) -
-     4       msh%x(2,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
-     5               + xiX(a,3)*(p%x(3) -
-     6       msh%x(3,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
+            IF (Jac .eq. 0) THEN
+            xXi = 0D0
+!     If one of all the coordinates is zero, you get a zero Jacobian
+!     So if this happens I just translate the element,
+!     Because we're just finding derivatives
+            DO a=1, msh%fa(ii)%eNoN
+                  xXi(:,1) = xXi(:,1) +
+     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          +1) *msh%fa(ii)%Nx(1,a,1)
+                  xXi(:,2) = xXi(:,2) +
+     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          +1) *msh%fa(ii)%Nx(2,a,1)
+                  xXi(:,3) = xXi(:,3) +
+     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          +1) *msh%fa(ii)%Nx(3,a,1)
             END DO
 
-            N(1) = prntx(1)
-            N(2) = prntx(2)
-            N(3) = 1 - prntx(1) - prntx(2)
+            Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
+     2      + xXi(1,2)*xXi(2,3)*xXi(3,1)
+     3      + xXi(1,3)*xXi(2,1)*xXi(3,2)
+     4      - xXi(1,1)*xXi(2,3)*xXi(3,2)
+     5      - xXi(1,2)*xXi(2,1)*xXi(3,3)
+     6      - xXi(1,3)*xXi(2,2)*xXi(3,1)
+            iJac = 1D0/Jac
+            END IF
 
-            IF (ALL(N.ge.0D0).and. prntx(3).gt.0
-     2      .and. prntx(3).lt.prt%dt) THEN
+          Am(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))*iJac
+          Am(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))*iJac
+          Am(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))*iJac
+          Am(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))*iJac
+          Am(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))*iJac
+          Am(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))*iJac
+          Am(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))*iJac
+          Am(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))*iJac
+          Am(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))*iJac
+
+!           Finding A*x_1
+             DO a = 1,nsd
+            Bm(a) = Am(a,1)*x1(1) + Am(a,2)*x1(2) + Am(a,3)*x1(3)
+             END DO
+
+!           Finding B = xi_1 - A*x_1
+            Bm = msh%fa(ii)%xi(:,1) - Bm
+
+!           Finding time such that xi(3) = 0
+            tc = -(Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
+     2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
+
+            xc = (p%x + p%u*tc)
+
+!           Finding parent coordinates
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
+      
+! Taken from NatxiEle (private)
+      !     3D elements (not possible)
+            SELECT CASE(msh%fa(ii)%eType)
+
+      !     2D elements         
+            CASE(eType_TRI)
+               N(1) = xi(1)
+               N(2) = xi(2)
+               N(3) = 1D0 - xi(1) - xi(2)
+            CASE(eType_BIL)
+               ux = 1D0 + xi(1)
+               uy = 1D0 + xi(2)
+               lx = 1D0 - xi(1)
+               ly = 1D0 - xi(2)
+               
+               N(1) = ux*uy/4D0
+               N(2) = lx*uy/4D0
+               N(3) = lx*ly/4D0
+               N(4) = ux*ly/4D0
+            CASE(eType_BIQ)
+               ux = 1D0 + xi(1)
+               uy = 1D0 + xi(2)
+               lx = 1D0 - xi(1)
+               ly = 1D0 - xi(2)
+               mx = xi(1)
+               my = xi(2)
+               
+               N(1) =  mx*lx*my*ly/4D0
+               N(2) = -mx*ux*my*ly/4D0
+               N(3) =  mx*ux*my*uy/4D0
+               N(4) = -mx*lx*my*uy/4D0
+               N(5) = -lx*ux*my*ly/2D0
+               N(6) =  mx*ux*ly*uy/2D0
+               N(7) =  lx*ux*my*uy/2D0
+               N(8) = -mx*lx*ly*uy/2D0
+               N(9) =  lx*ux*ly*uy
+      
+      !     1D elements         
+            CASE(eType_LIN)
+               N(1) = (1D0 - xi(1))/2D0
+               N(2) = (1D0 + xi(1))/2D0
+            CASE(eType_QUD)
+               N(1) = -xi(1)*(1D0 - xi(1))/2D0
+               N(2) =  xi(1)*(1D0 + xi(1))/2D0
+               N(3) = (1D0 - xi(1))*(1D0 + xi(1))
+            END SELECT
+
+! End NatxiEle
+
+            IF (ALL(N.ge.0D0).and. (tc.gt.0)
+     2      .and. tc.lt.prt%dt) THEN
                   p%faID(1) = ii
                   p%faID(2) = b%fa(ii)%els(jj)
-                  p%ti = prntx(3)
+                  p%ti = tc
                   RETURN
             ENDIF
 
@@ -861,7 +853,7 @@
 !     Send drag to fluid
       DO jj=1,msh%eNoN
             Ac = prt%dmn%msh(1)%IEN(jj,p%eID)
-            prt%twc%v(:,Ac) = 
+            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
      2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
 
@@ -965,7 +957,7 @@
       TYPE(VarType),POINTER :: u
       REAL(KIND=8) rhoF,
      2   mu, mp, g(nsd), dp,
-     3   rhoP, N(nsd+1), Ntmp(nsd+1)
+     3   rhoP, N(nsd+1), Ntmp(nsd+1), tt(4)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom
       INTEGER :: a, Ac
@@ -992,6 +984,11 @@
       p%sbIDo= p%sbID
 
  1    CONTINUE
+
+ !!! Show Esmaily (but eventually take out)
+      !tt = msh%fa(2)%NAtx((/.005D0,0.105D0,0D0/),
+      !2 msh%x(:,msh%fa(2)%IEN(:,1)))
+
 
       IF (p%wall) THEN
 !           Find which searchbox particle is in
@@ -1039,15 +1036,16 @@
 !     Send drag to fluid
       DO a=1,msh%eNoN
             Ac = msh%IEN(a,p%eID)
-            prt%twc%v(:,Ac) = 
+            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
      2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
+
       IF (prt%itr .EQ. 0) THEN
             tmpwr = 0.5*(apd+apdpred)
             write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
-            print *, sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
-            mom =prt%dmn%msh(1)%integ(u%v, 3)
-            print *, mom
+            !print *, sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
+            !mom =prt%dmn%msh(1)%integ(u%v, 3)
+            !print *, mom
             !call sleep(1)
       END IF
 
@@ -1128,7 +1126,7 @@
       DO i = 1,eq%n
             CALL eq%adv(i)
             IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
-     2            eq%dat(i)%u(3)       
+     2            eq%dat(i)%u(3) ,eq%dat(i)%x(2)      
 !           Reset if particles have collided
             eq%dat(i)%collided = .false.
       END DO
@@ -1138,9 +1136,10 @@
 
       IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u(3), !eq%dat(2)%u
      2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
-     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
-     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
-     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
+     3 eq%dat(1)%x(2),
+!     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
+!     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
+!     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
      6  P1,P2
       ENDDO
 

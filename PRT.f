@@ -564,7 +564,7 @@
 
 !     Calculating distance coefficient
       REAL(KIND=8) :: a, b, c, d, e, f, qa, qb, qc, zeros(2), tcr
-      REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd),temp(nsd)
+      REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd)
       REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, mp, rho, k
 !     Coefficients to make calculating parallel/perp vel easier
       REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1) , temp(nsd)

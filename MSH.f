@@ -96,7 +96,7 @@ c         PRIVATE
 
       DO iFa=1, nFa
          lPBC => lst%get(stmp,"Add face",iFa)
-         lPtr => lPBC%get(f,"vtk file path")
+         lPtr => lPBC%get(f,"vtk file path")         
          CALL msh%readFace(iFa,stmp,file=f)
       END DO
 

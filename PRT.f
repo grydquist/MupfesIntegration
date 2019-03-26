@@ -1,13 +1,17 @@
       MODULE PRTMOD
-      USE EQMOD
+      USE INSMOD
 !     FSI is using PRTMOD
       IMPLICIT NONE
-      
-      INTEGER, PARAMETER :: OLD=1, CUR=2, NEW=3, RHS=4, IMP=4
 
-!     Size of the container is extended by this factor if it's
-!     completely filled
-      INTEGER, PARAMETER :: prtExtFac = 2
+!     Is used to initialize equation
+      TYPE(eqSpType), PARAMETER, PRIVATE :: eqSp = eqSpType(
+     1   nVar = 2,
+     2   itgO = 1,
+     3   lsAl = 3,!LS_TYPE_PRT,
+     5   sym  = "PRT")
+
+!     Temporary holder for types of faces
+      INTEGER, ALLOCATABLE :: faTyp(:)
 
 !     Face element boxes
       TYPE facelsboxType
@@ -16,6 +20,7 @@
 
 !     Faces and their elements
       TYPE facelsType
+      ! Elements of face
             INTEGER, ALLOCATABLE :: els(:)
       END TYPE
 
@@ -49,7 +54,7 @@
 !     Your data type that you need to store in a Dynamic Sized Container
       TYPE pRawType
 !     Eulerian element ID that this particle belongs to
-         INTEGER(KIND=8) :: eID=0
+         INTEGER(KIND=8) :: eID=1
 !     Previous element ID
          INTEGER(KIND=8) :: eIDo=1
 !     Particle ID
@@ -73,19 +78,19 @@
 !     Velocity at collision
          REAL(KIND=8) :: uc(3) = 0D0
 !     Shape functions in current element
-         REAL(KIND=8) N(4)
+         REAL(KIND=8), ALLOCATABLE :: N(:)
 !     Has this particle collided during the current time step?
          LOGICAL :: collided = .FALSE.
 !     Remaining time in timestep after collision
          REAL(KIND=8) :: remdt
 !     Time until collision
          REAL(KIND=8) :: ti
+!     Did particle hit a wall?
+         LOGICAL :: wall = .TRUE.
       END TYPE pRawType
 
 !     Collection of particles
-      TYPE prtType
-!     Created?
-         LOGICAL :: crtd = .FALSE.
+      TYPE, EXTENDS(eqType) :: prtType
 !     Maximum capacity of container
          INTEGER :: maxN = 1024
 !     Current size
@@ -98,22 +103,20 @@
          INTEGER, ALLOCATABLE :: ptr(:)
 !     Data
          TYPE(pRawType), ALLOCATABLE :: dat(:)
-!     Material properties
-         TYPE(matType), POINTER :: mat
+!     Velocity, from NS
+         TYPE(varType), POINTER :: Uns => NULL()
+!     Pressure, from NS
+         TYPE(varType), POINTER :: Pns => NULL()
+!     Material properties, from NS
+         TYPE(matType), POINTER :: mns => NULL()
+!     Two way coupling force passed to fluid
+         TYPE(varType), POINTER :: twc => NULL()
+!     Weighted volume
+         REAL(KIND=8), ALLOCATABLE :: wV(:)
 
       CONTAINS
-!     Creates a new prt type
-         PROCEDURE :: new => newPrt
-!     Selects one particle
-         PROCEDURE :: get => getFPrt
-!     Removes a particle
-         PROCEDURE :: rm => rmFPrt
-!     Adds a particle to the structure
-         PROCEDURE :: add => addFPrt
-!     Increases the size of the container 
-         PROCEDURE :: extend => extendPrt
-!     Deletes the structure
-         PROCEDURE :: free => freePrt
+!     Sets up all structure
+         PROCEDURE :: setup => setupPrt
 !     Returns shape function values at the location of a particle
          PROCEDURE :: shapeF => shapeFPrt
 !     Seed the domai with particles
@@ -128,136 +131,137 @@
          PROCEDURE :: findwl => findwlPrt
 !     Enacts collisions with walls
          PROCEDURE :: wall => wallPrt
+!     Advances particle given time step
+         PROCEDURE :: adv => advPrt
+
+!     Evaulate the governing equation
+         PROCEDURE :: eval3 => eval3Prt
+         PROCEDURE :: eval2 => eval2Prt
+!     Evaulate the governing equation boundary contribution
+         PROCEDURE :: bEval => bEvalPrt
       END TYPE prtType
+
+      INTERFACE prtType
+            PROCEDURE :: newPrt
+      END INTERFACE prtType
 
       CONTAINS
 
 !####################################################################
+!---------------------------------------------------------------------
+      SUBROUTINE eval3Prt(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
+      CLASS(prtType), INTENT(IN) :: eq
+      INTEGER, INTENT(IN) :: eNoN
+      INTEGER, INTENT(IN) :: eqN(eNoN)
+      REAL(KIND=8), INTENT(IN) :: w, J, N(eNoN), Nx(nsd,eNoN),
+     2   ks(nsd,nsd)
+      REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN), 
+     2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
 
-      SUBROUTINE newPrt(prt, n)
+
+      END SUBROUTINE eval3Prt
+
+!---------------------------------------------------------------------
+      PURE SUBROUTINE eval2Prt(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
+      CLASS(prtType), INTENT(IN) :: eq
+      INTEGER, INTENT(IN) :: eNoN
+      INTEGER, INTENT(IN) :: eqN(eNoN)
+      REAL(KIND=8), INTENT(IN) :: w, J, N(eNoN), Nx(nsd,eNoN),
+     2   ks(nsd,nsd)
+      REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN), 
+     2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
+
+      ! this is just a placeholder for now
+
+      END SUBROUTINE eval2Prt
+!---------------------------------------------------------------------
+      PURE SUBROUTINE bEvalPrt(eq, eNoN, eqN, w, N, h, nV, lR, lK)
+      CLASS(prtType), INTENT(IN) :: eq
+      INTEGER, INTENT(IN) :: eNoN, eqN(eNoN)
+      REAL(KIND=8), INTENT(IN) :: w, N(eNoN), h(:), nV(nsd)
+      REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN),
+     2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
+
+
+      END SUBROUTINE bEvalPrt
+!---------------------------------------------------------------------
+      FUNCTION newPrt(dmn, lst, Uns,mns,twc,Pns) RESULT(eq)
       IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: prt
-      INTEGER, INTENT(IN), OPTIONAL :: n
+      TYPE(dmnType), INTENT(IN) :: dmn
+      TYPE(lstType), INTENT(INOUT) :: lst
+      CLASS(varType), INTENT(IN), TARGET :: Uns
+      CLASS(varType), INTENT(IN), TARGET :: Pns
+      CLASS(matType), INTENT(IN), TARGET :: mns
+      CLASS(varType), INTENT(IN), OPTIONAL, TARGET :: twc
+      TYPE(prtType) :: eq
+      TYPE(lstType), POINTER :: lPt1,lPt2,lPBC
+      INTEGER nFa,iFa, typ2
+      CHARACTER(LEN=stdL) stmp,typ1
 
-      INTEGER i
-
-      IF (prt%crtd) RETURN
-
-      IF (PRESENT(n)) prt%maxN = n
-      ALLOCATE(prt%dat(prt%maxN), prt%ptr(prt%maxN))
-      DO i=1, prt%maxN
-         prt%ptr(i) = i
+      CALL eq%new(eqSp, dmn, lst)
+      nFa  = lst%srch("Add BC")
+      ALLOCATE(faTyp(nFa))
+      eq%Uns => Uns
+      eq%mns => mns
+      eq%Pns => Pns
+      IF(PRESENT(twc)) eq%twc => twc
+      DO iFa=1, nFa
+            lPBC => lst%get(stmp,"Add BC",iFa)
+            lPt1 => lPBC%get(typ1,"Face type")
+            SELECT CASE (LOWER(TRIM(typ1)))
+            CASE ("inlet")
+               faTyp(iFa) = 1
+               lPt2 =>lPBC%get(typ2,"Number")
+               eq%n = typ2
+            CASE("outlet")
+               faTyp(iFa) = 2
+            CASE("wall")
+               faTyp(iFa) = 3
+            CASE DEFAULT
+            io%e = "Select inlet, outlet, or wall Face type"         
+         END SELECT
       END DO
-      prt%n = n
-      prt%mat  => FIND_MAT('Particle')
-      CALL prt%seed()
-      prt%crtd = .TRUE.
+
 
       RETURN
-      END SUBROUTINE newPrt
+      END FUNCTION newPrt
+
 !--------------------------------------------------------------------
-      FUNCTION getFPrt(d,i)
-      IMPLICIT NONE
-      CLASS(prtType), TARGET, INTENT(IN) :: d
-      INTEGER, INTENT(IN) :: i
-      TYPE(pRawType), POINTER :: getFPrt
+      SUBROUTINE setupPrt(eq, var)
+      CLASS(prtType), INTENT(INOUT), TARGET :: eq
+      TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
+      INTEGER i,a, Ac,cnt
+      REAL(KIND=8), ALLOCATABLE :: volt(:)
 
-      INTEGER ind
+      open(88,file='pos.txt') !! For data output
 
-      IF (i.GT.d%n .OR. i.LT.1) THEN
-         getFPrt => NULL()
-         RETURN
-      END IF
+      ALLOCATE(volt(eq%dmn%msh(1)%eNon))
+      ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n),eq%wV(eq%dmn%msh(1)%nNo))
 
-      ind = d%ptr(i)
-      getFPrt => d%dat(ind)
+      eq%wV = 0D0
+      cnt =0
+      DO i=1, eq%n
+         eq%ptr(i) = i
+         ALLOCATE(eq%dat(i)%N(eq%dmn%msh(1)%eNoN))
+      END DO
+      eq%mat  => FIND_MAT('Particle')
+      eq%var(1) = gVarType(nsd,'PVelocity',eq%dmn)
+      eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
-      RETURN
-      END FUNCTION getFPrt
-!--------------------------------------------------------------------
-      SUBROUTINE rmFPrt(d,i)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: d
-      INTEGER, INTENT(IN) :: i
+!     Assuming everything is in first mesh for searchboxes !!!!!!
+      CALL eq%sb%new(eq%dmn%msh(1))
+!     Getting volumes of influence for each node
+      DO i = 1,eq%dmn%msh(1)%nEl
+            volt = effvolel(eq%dmn%msh(1),i)
+            DO a = 1,eq%dmn%msh(1)%eNoN
+                  Ac = eq%dmn%msh(1)%IEN(a,i)
+                  eq%wV(Ac) = eq%wV(Ac) + volt(a)
+            END DO
+      END DO
 
-      INTEGER ind
+      CALL eq%seed()
 
-      IF (.NOT.d%crtd) STOP "prt not created yet!"
-      IF (i.GT.d%n .OR. i.LT.1) STOP "Out of range index in rmFPrt"
-
-      ind        = d%ptr(i)
-      d%ptr(i)   = d%ptr(d%n)
-      d%ptr(d%n) = ind
-      d%n        = d%n - 1
-
-      RETURN
-      END SUBROUTINE rmFPrt
-!--------------------------------------------------------------------
-      SUBROUTINE addFPrt(d,iDat,ind)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: d
-      TYPE(pRawType), INTENT(IN) :: iDat
-
-      INTEGER, INTENT(IN) :: ind
-
-      IF (.NOT.d%crtd) STOP "prt not created yet!"
-      !IF (d%n .EQ. d%maxN) CALL d%extend()
-
-      !d%n        = d%n + 1
-      !ind        = d%ptr(d%n)
-      d%dat(ind) = iDat
-
-      RETURN
-      END SUBROUTINE addFPrt
-!--------------------------------------------------------------------
-      SUBROUTINE extendPrt(d, maxN)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: d
-      INTEGER, INTENT(IN), OPTIONAL :: maxN
-
-      INTEGER oldMax, newMax
-      TYPE(prtType) dTmp
-
-      IF (.NOT.d%crtd) STOP "prt not created yet!"
-      
-      oldMax = d%maxN
-      newMax = prtExtFac*oldMax
-      IF (PRESENT(maxN)) newMax = maxN
-      IF (newMax .EQ. 0) newMax = prtExtFac
-
-!     At least size must be increased by one
-      IF (newMax .LE. oldMax) RETURN
-
-      CALL dTmp%new(newMax)
-      dTmp%n             = d%n
-      dTmp%dat(1:oldMax) = d%dat
-      dTmp%ptr(1:oldMax) = d%ptr
-
-      CALL d%free()
-      CALL d%new(newMax)
-      d%n             = dTmp%n
-      d%dat(1:oldMax) = dTmp%dat(1:oldMax)
-      d%ptr(1:oldMax) = dTmp%ptr(1:oldMax)
-      CALL dTmp%free()
-
-      RETURN
-      END SUBROUTINE extendPrt
-!--------------------------------------------------------------------
-      PURE SUBROUTINE freePrt(prt)
-      IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT) :: prt
-
-      INTEGER iSb
-
-      IF (.NOT.prt%crtd) RETURN
-      
-      prt%crtd = .FALSE.
-      prt%n    = 0
-      DEALLOCATE(prt%dat, prt%ptr)
-      
-
-      RETURN
-      END SUBROUTINE freePrt
+      END SUBROUTINE setupPrt
 !--------------------------------------------------------------------
       SUBROUTINE newSb(sb,msh)
       CLASS(mshType), INTENT(IN) :: msh
@@ -265,7 +269,7 @@
       TYPE(facelsboxType), ALLOCATABLE :: facels(:)
       INTEGER :: ii,jj,cnt2,kk,ll
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
-      REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl)
+      REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl), eps(nsd)
       INTEGER, ALLOCATABLE :: sbel(:),sbelf(:)
       INTEGER :: split(nsd)
       IF (sb%crtd) RETURN
@@ -289,8 +293,10 @@
       diff(1)=MAXVAL(msh%x(1,:))-MINVAL(msh%x(1,:))
       diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
       diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
+      ! Tolerance
+      eps = 0.5*diff
       ! Size of sb
-      sb%step=diff/((sb%n+1)/2)
+      sb%step=diff/((sb%n+1)/2) + eps
 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
@@ -304,19 +310,19 @@
       ! Direction 1
       do ii=1,sb%n(1)
          sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:)) 
-     2       + sb%step(1)*(ii-1)/2
+     2       + sb%step(1)*(ii-1)/2 - eps(1)/2
       end do
 
       ! Direction 2
       do ii=1,sb%n(2)
          sb%box(seq2+(ii-1)*sb%n(1))%dim(3) = MINVAL(msh%x(2,:))
-     2       + sb%step(2)*(ii-1)/2
+     2       + sb%step(2)*(ii-1)/2 - eps(2)/2
       end do
 
       ! Direction 3
       do ii=1,sb%n(3)
          sb%box(seq3+(ii-1)*sb%n(1)*sb%n(2))%dim(5)=
-     2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2
+     2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2 - eps(3)/2
       end do
 
       sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
@@ -331,8 +337,7 @@
          end do
       end do
 
-!     Make boxes around face elements
-!!!! This part seems right
+!     Make boxes around FACE elements
       do ii = 1,msh%nFa
             ALLOCATE(facels(ii)%elbox(2*nsd,msh%fa(ii)%nEl))
             do jj = 1,msh%fa(ii)%nEl
@@ -405,9 +410,8 @@
       CLASS(sbType), INTENT(IN) :: sb
       REAL(KIND=8), INTENT(IN) :: x(nsd)
       INTEGER iSb(2**nsd)
-
       REAL(KIND=8) :: xzero(nsd)
-      INTEGER :: xsteps(nsd), i(nsd)
+      INTEGER :: xsteps(nsd)
 
       ! Set domain back to zero
       xzero(1) = x(1) - minval(sb%box(:)%dim(1))
@@ -441,122 +445,33 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(IN),TARGET :: prt
       INTEGER, INTENT(IN) :: ip
-      REAL(KIND=8) :: N(4)
       TYPE(mshType), INTENT(IN) :: msh
-
-      INTEGER, PARAMETER :: TIME_POINT=CUR, iM=1
-
-      LOGICAL NOX
+      REAL(KIND=8) :: N(msh%eNoN)
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
-      INTEGER :: ii,cnt,a
-      REAL(KIND=8) :: Jac,xXi(nsd,nsd), xiX(nsd,nsd),Nx(nsd,nsd+1),
-     2 Nxi(nsd,nsd+1),prntx(nsd)
-      cnt=1
-
-      Nxi(1,1) =  1D0
-      Nxi(2,1) =  0D0
-      Nxi(3,1) =  0D0
-      Nxi(1,2) =  0D0
-      Nxi(2,2) =  1D0
-      Nxi(3,2) =  0D0
-      Nxi(1,3) =  0D0
-      Nxi(2,3) =  0D0
-      Nxi(3,3) =  1D0
-      Nxi(1,4) = -1D0
-      Nxi(2,4) = -1D0
-      Nxi(3,4) = -1D0
-
-      IF (msh%eType.NE.eType_TET) 
-     2   io%e = "shapeFPrt only defined for tet elements"
+      INTEGER :: ii, ind
 
       p => prt%dat(ip)
-      p%eID = 0
       b => prt%sb%box(p%sbID(1))
 
-      do ii=1,size(b%els)
+      do ii=1,size(b%els)+1
 
-      xXi = 0D0
+            ind = b%els(ii-1)
+            if (ii.eq.1) ind = p%eIDo
 
-      IF (nsd .EQ. 2) THEN
-      !
-      ! 2D not done
-      !
-!         DO a=1, eNoN
-!            xXi(:,1) = xXi(:,1) + x(:,a)*Nxi(1,a)
-!            xXi(:,2) = xXi(:,2) + x(:,a)*Nxi(2,a)
-!         END DO
-!
-!         Jac = xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1)
-!
-!         xiX(1,1) =  xXi(2,2)/Jac
-!         xiX(1,2) = -xXi(1,2)/Jac
-!         xiX(2,1) = -xXi(2,1)/Jac
-!         xiX(2,2) =  xXi(1,1)/Jac
-!
-!         
-!         DO a=1, eNoN
-!            Nx(1,a) = Nx(1,a)+ Nxi(1,a)*xiX(1,1) + Nxi(2,a)*xiX(2,1)
-!            Nx(2,a) = Nx(2,a)+ Nxi(1,a)*xiX(1,2) + Nxi(2,a)*xiX(2,2)
-!         END DO
-!
-      ELSE
-      ! 3D case
+            N = msh%nAtx(p%x,msh%x(:,msh%IEN(:,ind)))
 
-      ! Setting up matrix to be inverted
-         DO a=1, msh%eNoN
-            xXi(:,1) = xXi(:,1) +
-     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(1,a)
-            xXi(:,2) = xXi(:,2) +
-     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(2,a)
-            xXi(:,3) = xXi(:,3) + 
-     2        msh%x(:,msh%IEN(a,b%els(ii)))*Nxi(3,a)
-         END DO
-         
-      ! Inverting matrix
-         Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
-     2       + xXi(1,2)*xXi(2,3)*xXi(3,1)
-     3       + xXi(1,3)*xXi(2,1)*xXi(3,2)
-     4       - xXi(1,1)*xXi(2,3)*xXi(3,2)
-     5       - xXi(1,2)*xXi(2,1)*xXi(3,3)
-     6       - xXi(1,3)*xXi(2,2)*xXi(3,1)
-
-         xiX(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))/Jac
-         xiX(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))/Jac
-         xiX(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))/Jac
-         xiX(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))/Jac
-         xiX(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))/Jac
-         xiX(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))/Jac
-         xiX(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))/Jac
-         xiX(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))/Jac
-         xiX(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))/Jac
-         
-      ! Finding particle coordinates in parent coordinate system
-         DO a=1, nsd
-            prntx(a) = xiX(a,1)*(p%x(1) - msh%x(1,msh%IEN(4,b%els(ii))))
-     2               + xiX(a,2)*(p%x(2) - msh%x(2,msh%IEN(4,b%els(ii))))
-     3               + xiX(a,3)*(p%x(3) - msh%x(3,msh%IEN(4,b%els(ii))))
-         END DO
-      END IF
-
-      ! Finding shape function values at particle coordinates
-      N(1) = prntx(1)
-      N(2) = prntx(2)
-      N(3) = prntx(3)
-      N(4) = 1 - prntx(1) - prntx(2) - prntx(3)
-
-      ! Checking if all shape functions are positive
-      IF (ALL(N.ge.0D0)) then
-         p%eID=b%els(ii)
-         p%N = N
-         EXIT
-      END IF
+            ! Checking if all shape functions are positive
+            IF (ALL(N.ge.0D0)) then
+                  p%eID=ind
+                  p%N = N
+                  EXIT
+            END IF
          
       end do
 
       ! If it loops through everything and doesn't yield a positive shape function,
       ! the particle is outside the domain
-      if (p%eID.eq.0) io%e = 'outside domain'
 
       RETURN
       END FUNCTION shapeFPrt
@@ -565,7 +480,7 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT) :: prt
       
-      INTEGER ip, iDis
+      INTEGER ip
 
       TYPE(pRawType) p
 
@@ -576,59 +491,23 @@
            CALL RANDOM_NUMBER(p%x(:))
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
-           !CALL prt%add(p)
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 1.01D0/ip
+           p%x(3) = 29.5D0/ip
            prt%dat(ip) = p
       END DO
 
 
       RETURN
       END SUBROUTINE seedPrt
-!--------------------------------------------------------------------
-      SUBROUTINE PRTTRANS
-      IMPLICIT NONE 
 
-      INTEGER e, ip, a, Ac, eNoN
-      REAL(KIND=8) N(4), up(3)
-      TYPE(prtType) :: prt
-      TYPE(pRawType), POINTER :: p
-      TYPE(mshType) :: msh
-      ! wrong here vv
-      REAL(KIND=8) :: YN(3,1)
- 
-      eNoN = msh%eNoN
-!     Initializing particles
-      CALL prt%new()
-      CALL prt%seed()
-      CALL prt%sb%new(msh)
-
-
-
-      DO ip=1, prt%n
-         p => prt%get(ip)
-         !e = prt%shapeF(ip,msh)
-         up = 0D0
-         DO a=1, eNoN
-            Ac = msh%IEN(a,e)
-            ! Don't know what Yn is
-            up = up + Yn(1:3,Ac)*N(a)
-         END DO
-      END DO
-
-      call prt%free()
-
-      RETURN
-      END SUBROUTINE PRTTRANS
 !--------------------------------------------------------------------
 !     Gets the acceleration due to drag on a single particle
-      FUNCTION dragPrt(prt, ip, ns) RESULT(apd)
+      FUNCTION dragPrt(prt, ip) RESULT(apd)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER,INTENT(IN) :: ip
-      CLASS(ceqType), INTENT(IN) :: ns
       REAL(KIND=8) :: taupo      
-      TYPE(gVarType),POINTER :: u
+      TYPE(VarType),POINTER :: u
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       REAL(KIND=8) :: apd(nsd), fvel(nsd), taup, rhoP, mu,dp
@@ -640,13 +519,12 @@
       p => prt%dat(ip)
       dp = prt%mat%D()
       rhoP = prt%mat%rho()
-      mat => ns%s%mat
-      msh => ns%s%dmn%msh(1)
-      u => ns%s%var(1)
+      msh => prt%dmn%msh(1)
+      u => prt%Uns
 
 !     Fluid parameters
-      rhoF = mat%rho()
-      mu  = mat%mu()
+      rhoF = prt%mns%rho()
+      mu  = prt%mns%mu()
 
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
@@ -658,15 +536,17 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
-      fvel = 0
-      fvel(3) = -3D0
+      !fvel = 0
+      !fvel(3) = -3D0!!!!!!!!!!!!!!
+      !fvel(1) = fvel(1)+1
+      !if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
 
       ! Relative velocity
       relvel = fvel - p%u
       ! Relative velocity magnitude
       magud = SUM(relvel**2D0)**0.5D0
       ! Reynolds Number
-      Rep = dp*magud*rhoP/mu
+      Rep = dp*magud*rhoF/mu
       ! Schiller-Neumann (finite Re) correction
       fSN = 1D0 + 0.15D0*Rep**0.687D0
       ! Stokes corrected drag force
@@ -687,7 +567,7 @@
       REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd),temp(nsd)
       REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, mp, rho, k
 !     Coefficients to make calculating parallel/perp vel easier
-      REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1)
+      REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1) , temp(nsd)
 
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
@@ -731,6 +611,17 @@
       ! particle locations at point of collision
       p1%xc = p1%u*tcr + p1%x
       p2%xc = p2%u*tcr + p2%x
+      p1%x  = p1%xc
+      p2%x  = p2%xc
+
+!     Check if the particle is outside the domain
+      Np1 = prt%shapeF(id1, lM)
+      Np2 = prt%shapeF(id2, lM)
+      IF (ANY(Np1.lt.0) .or. ANY(Np2.lt.0)) THEN
+            p1%x = p1%xo
+            p2%x = p2%xo
+            RETURN
+      END IF
 
       ! Vector parallel and pependicular to collision tangent line
       n1 = (p1%xc - p2%xc)/((dp + dp)/2)
@@ -767,28 +658,11 @@
       p1%uc = p1%u
       p2%uc = p2%u
 
-      !!! Needs to be extended for multiple collisions per time step (will probably be here)
-      ! Advance particle the rest of the time step at this velocity.
-      p1%x = p1%xc + p1%u*(dtp - tcr)
-      p2%x = p2%xc + p2%u*(dtp - tcr)
-
       p1%collided = .true.
       p2%collided = .true.
 
-      p1%remdt = dtp-tcr
-      p2%remdt = dtp-tcr
-
-!     Find which searchbox particles are in
-      p1%sbID = prt%sb%id(p1%x)
-!     Find which searchbox particles are in
-      p2%sbID = prt%sb%id(p1%x)
-!     Get shape functions/element of particle
-      Np1 = prt%shapeF(1, lM)
-      Np2 = prt%shapeF(2, lM)
-      !IF ANY(Np1.lt.0)
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p1 
-      !IF ANY(Np2.lt.0)
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt for p2 
+      p1%remdt = p1%remdt-tcr
+      p2%remdt = p2%remdt-tcr
 
       END SUBROUTINE collidePrt
 !--------------------------------------------------------------------
@@ -798,77 +672,160 @@
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
-      REAL(KIND=8) :: Jac, xXi(nsd,nsd), xiX(nsd,nsd), Nxi(nsd,nsd)
-      REAL(KIND=8) :: prntx(nsd), N(nsd)
+      REAL(KIND=8) :: Jac, xXi(nsd,nsd), Am(nsd,nsd), x1(nsd), tc
+      REAL(KIND=8) :: N(msh%fa(1)%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
       INTEGER :: ii, jj, a
+      REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac
 
       p => prt%dat(idp)
       b => prt%sb%box(p%sbID(1))
 
-      Nxi(1,1) =  1D0
-      Nxi(2,1) =  0D0
-      Nxi(1,2) =  0D0
-      Nxi(2,2) =  1D0
-      Nxi(1,3) = -1D0
-      Nxi(2,3) = -1D0
       p%faID = 0
 
       faceloop: DO ii=1,msh%nFa
       DO jj=1,size(b%fa(ii)%els)
 
             xXi = 0D0
+            Bm = 0D0
+            x1 = 0D0
       !     Setting up matrix for inversion
-            DO a=1, msh%eNoN-1
+            DO a=1, msh%fa(ii)%eNoN !! Only for tets
                   xXi(:,1) = xXi(:,1) +
-     2        msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))*Nxi(1,a)
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          *msh%fa(ii)%Nx(1,a,1)
                   xXi(:,2) = xXi(:,2) +
-     2        msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))*Nxi(2,a)
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          *msh%fa(ii)%Nx(2,a,1)
+                  xXi(:,3) = xXi(:,3) +
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          *msh%fa(ii)%Nx(3,a,1)
+!           Location of Gauss point (for Bm)
+                  x1 = x1 + msh%fa(ii)%N(a,1)*
+     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
             ENDDO
-            xXi(:,3) = -p%u
 
-                  ! Inverting matrix
             Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
-     2       + xXi(1,2)*xXi(2,3)*xXi(3,1)
-     3       + xXi(1,3)*xXi(2,1)*xXi(3,2)
-     4       - xXi(1,1)*xXi(2,3)*xXi(3,2)
-     5       - xXi(1,2)*xXi(2,1)*xXi(3,3)
-     6       - xXi(1,3)*xXi(2,2)*xXi(3,1)
-    
-            xiX(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))/Jac
-            xiX(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))/Jac
-            xiX(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))/Jac
-            xiX(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))/Jac
-            xiX(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))/Jac
-            xiX(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))/Jac
-            xiX(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))/Jac
-            xiX(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))/Jac
-            xiX(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))/Jac
+     2      + xXi(1,2)*xXi(2,3)*xXi(3,1)
+     3      + xXi(1,3)*xXi(2,1)*xXi(3,2)
+     4      - xXi(1,1)*xXi(2,3)*xXi(3,2)
+     5      - xXi(1,2)*xXi(2,1)*xXi(3,3)
+     6      - xXi(1,3)*xXi(2,2)*xXi(3,1)
+            iJac = 1D0/Jac
 
-            DO a=1, nsd
-            prntx(a) = xiX(a,1)*(p%x(1) -
-     2       msh%x(1,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
-     3               + xiX(a,2)*(p%x(2) -
-     4       msh%x(2,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
-     5               + xiX(a,3)*(p%x(3) -
-     6       msh%x(3,msh%fa(ii)%IEN(3,b%fa(ii)%els(jj))))
+            IF (Jac .eq. 0) THEN
+            xXi = 0D0
+!     If one of all the coordinates is zero, you get a zero Jacobian
+!     So if this happens I just translate the element,
+!     Because we're just finding derivatives
+            DO a=1, msh%fa(ii)%eNoN
+                  xXi(:,1) = xXi(:,1) +
+     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          +1) *msh%fa(ii)%Nx(1,a,1)
+                  xXi(:,2) = xXi(:,2) +
+     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          +1) *msh%fa(ii)%Nx(2,a,1)
+                  xXi(:,3) = xXi(:,3) +
+     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+     3          +1) *msh%fa(ii)%Nx(3,a,1)
             END DO
 
-            N(1) = prntx(1)
-            N(2) = prntx(2)
-            N(3) = 1 - prntx(1) - prntx(2)
+            Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
+     2      + xXi(1,2)*xXi(2,3)*xXi(3,1)
+     3      + xXi(1,3)*xXi(2,1)*xXi(3,2)
+     4      - xXi(1,1)*xXi(2,3)*xXi(3,2)
+     5      - xXi(1,2)*xXi(2,1)*xXi(3,3)
+     6      - xXi(1,3)*xXi(2,2)*xXi(3,1)
+            iJac = 1D0/Jac
+            END IF
 
-            IF (ALL(N.ge.0D0).and. prntx(3).gt.0) THEN
- !    2      .and. prntx(3).lt.prt%dt) THEN
+          Am(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))*iJac
+          Am(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))*iJac
+          Am(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))*iJac
+          Am(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))*iJac
+          Am(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))*iJac
+          Am(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))*iJac
+          Am(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))*iJac
+          Am(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))*iJac
+          Am(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))*iJac
+
+!           Finding A*x_1
+             DO a = 1,nsd
+            Bm(a) = Am(a,1)*x1(1) + Am(a,2)*x1(2) + Am(a,3)*x1(3)
+             END DO
+
+!           Finding B = xi_1 - A*x_1
+            Bm = msh%fa(ii)%xi(:,1) - Bm
+
+!           Finding time such that xi(3) = 0
+            tc = -(Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
+     2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
+
+            xc = (p%x + p%u*tc)
+
+!           Finding parent coordinates
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
+      
+! Taken from NatxiEle (private)
+      !     3D elements (not possible)
+            SELECT CASE(msh%fa(ii)%eType)
+
+      !     2D elements         
+            CASE(eType_TRI)
+               N(1) = xi(1)
+               N(2) = xi(2)
+               N(3) = 1D0 - xi(1) - xi(2)
+            CASE(eType_BIL)
+               ux = 1D0 + xi(1)
+               uy = 1D0 + xi(2)
+               lx = 1D0 - xi(1)
+               ly = 1D0 - xi(2)
+               
+               N(1) = ux*uy/4D0
+               N(2) = lx*uy/4D0
+               N(3) = lx*ly/4D0
+               N(4) = ux*ly/4D0
+            CASE(eType_BIQ)
+               ux = 1D0 + xi(1)
+               uy = 1D0 + xi(2)
+               lx = 1D0 - xi(1)
+               ly = 1D0 - xi(2)
+               mx = xi(1)
+               my = xi(2)
+               
+               N(1) =  mx*lx*my*ly/4D0
+               N(2) = -mx*ux*my*ly/4D0
+               N(3) =  mx*ux*my*uy/4D0
+               N(4) = -mx*lx*my*uy/4D0
+               N(5) = -lx*ux*my*ly/2D0
+               N(6) =  mx*ux*ly*uy/2D0
+               N(7) =  lx*ux*my*uy/2D0
+               N(8) = -mx*lx*ly*uy/2D0
+               N(9) =  lx*ux*ly*uy
+      
+      !     1D elements         
+            CASE(eType_LIN)
+               N(1) = (1D0 - xi(1))/2D0
+               N(2) = (1D0 + xi(1))/2D0
+            CASE(eType_QUD)
+               N(1) = -xi(1)*(1D0 - xi(1))/2D0
+               N(2) =  xi(1)*(1D0 + xi(1))/2D0
+               N(3) = (1D0 - xi(1))*(1D0 + xi(1))
+            END SELECT
+
+! End NatxiEle
+
+            IF (ALL(N.ge.0D0).and. (tc.gt.0)
+     2      .and. tc.lt.prt%dt) THEN
                   p%faID(1) = ii
-                  p%faID(2) = jj
-                  p%ti = prntx(3)
-            IF (p%ti .lt.7D0) CALL prt%wall(idp,msh)
-                  EXIT faceloop
+                  p%faID(2) = b%fa(ii)%els(jj)
+                  p%ti = tc
+                  RETURN
             ENDIF
 
       ENDDO
       ENDDO faceloop
-      !io%e = "Wrong searchbox"
+      io%e = "Wrong searchbox"
       
       END SUBROUTINE findwlPrt
 !--------------------------------------------------------------------
@@ -877,62 +834,101 @@
       INTEGER, INTENT(IN) :: idp
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
-      INTEGER :: ii
+      INTEGER :: ii, rndi, jj, Ac
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
-     2 a(nsd), b(nsd), vpar, vperp, temp(nsd)
+     2 a(nsd), b(nsd), vpar, vperp, temp(nsd), rnd,
+     3 apd(nsd), mp, rhoF
 
-      CALL prt%findwl(idp,msh)
       p   =>prt%dat(idp)
       dp  = prt%mat%D()
       rho = prt%mat%rho()
       k   = prt%mat%krest()
-!     Get normal/tangent vector
-      a = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
-     2    msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
-      b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
-     2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
-      nV = CROSS2(a,b)
-      temp = CROSS2(nV,p%u)
-      tV = CROSS2(temp,nV)
-! Rare case with no perpendicular velocity
-      IF (ANY(ISNAN(tV))) tV = 0D0
-      
-      vperp = sum(tV*p%u)
-      vpar  = sum(nV*p%u)*k
+      rhoF  = prt%mns%rho()
+      mp = pi*rho/6D0*dp**3D0
+
+!     Get first order drag
+      apd = prt%drag(idp)
+      p%u = p%u + apd*p%ti
+
+!     Send drag to fluid
+      DO jj=1,msh%eNoN
+            Ac = prt%dmn%msh(1)%IEN(jj,p%eID)
+            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+     2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
+      END DO
 
 !     Advance to collision location
       p%xc = p%u*p%ti + p%x
-      p%remdt = prt%dt - p%ti
+      p%x  = p%xc
+      p%remdt = p%remdt - p%ti
 
-!     Change velocities to after collision
-      p%u = -vpar*nV +vperp*tV
+      IF (faTyp(p%faID(1)) .EQ. 3) THEN
+!     Hitting wall
 
-!     Advance rest of the way
-      p%x = p%u*p%remdt + p%xc
-
-!     For particles that haven't collided
-      IF (.not.p%collided) THEN
-
-
+!     Get normal/tangent vector
+            a = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
+     2    msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
+            b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
+     2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
+            nV = CROSS2(a,b)
+            temp = CROSS2(nV,p%u)
+            tV = CROSS2(temp,nV)
+      ! Rare case with no perpendicular velocity
+            IF (ANY(ISNAN(tV))) tV = 0D0
+            vperp = sum(tV*p%u)
+            vpar  = sum(nV*p%u)*k
+      !     Change velocities to after collision
+            p%u = -vpar*nV +vperp*tV
 
       ELSE
-!     For particles that have collided
 
-      ENDIF
+!     Exiting domain
+      faloop:DO ii = 1,msh%nFa
+!           Search for inlet to put particle back into
+            IF (faTyp(ii) .EQ. 1) THEN
+!           Select random node on face to set as particle position
+            CALL RANDOM_NUMBER(rnd)
+            rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
+            p%x = (/0D0,0D0,29.5D0/)!msh%x(:,msh%fa(ii)%IEN(1,rndi))
 
+            EXIT faloop
+            END IF
+      ENDDO faloop
 
-
-      
-      ! First, if collided, check if collision was out of domain w/ sbID,shapeF
-      ! If not, go back to xco, uco, find element it collides with
-      ! If so, go back to xo, uo
-      ! Get collision velocities/positions
-      ! advance remaining time step
-      ! For above, do the same if not collided, just go back to xo,uo
-      ! maybe don't use uo, but use velocity you used to translate?
-      ! At the end, set sbID = 0 so it finds it next time around
+      END IF
 
       END SUBROUTINE wallPrt
+
+!--------------------------------------------------------------------
+      ! Finds the volume influenced by moving one node in one element,
+      ! for all nodes in that element
+      FUNCTION effvolel(msh,e) RESULT(effvol)
+      IMPLICIT NONE
+      TYPE(mshtype), INTENT(IN) :: msh
+      INTEGER, INTENT(IN) :: e
+      REAL(KIND=8) :: effvol(msh%eNoN)
+      INTEGER g,a, Ac(msh%eNoN)
+      REAL(KIND=8) :: Jac, x(nsd, msh%eNoN), Nx(nsd,msh%eNoN)
+
+      effvol = 0D0
+
+!     Indices and coordinates of nodes
+      DO a = 1,msh%eNoN
+            Ac(a) = msh%IEN(a,e)
+      END DO
+
+      x = msh%x(:,Ac)      
+
+      DO g = 1, msh%nG
+!     First, we want the Jacobian, which (if shpfns are linear) is the same for all gauss points
+      IF (g.EQ.1 .OR. .NOT.msh%lShpF) CALL msh%dNdx(g,x,Nx,Jac)
+            DO a = 1, msh%eNoN
+!           Numerically integrate to get volume of each node
+                  effvol(a) = effvol(a) + msh%N(a,g)*Jac*msh%w(g)
+            END DO
+      END DO
+
+      END FUNCTION
 
 !--------------------------------------------------------------------
       ! I use cross products a couple times above and didn't want to integrate the util one
@@ -950,193 +946,208 @@
       
       END FUNCTION cross2
 !--------------------------------------------------------------------
-      SUBROUTINE advPrt(prt, idp, ns,dt)
+      SUBROUTINE advPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
-      CLASS(ceqType), INTENT(IN) :: ns
-      REAL(KIND=8), INTENT(IN) :: dt
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
-      TYPE(pRawType), POINTER :: p, tp(:)
+      TYPE(pRawType), POINTER :: p, tp
       TYPE(prtType), TARGET :: tmpprt
       TYPE(sbType), POINTER :: sb
+      TYPE(VarType),POINTER :: u
       REAL(KIND=8) rhoF,
-     2   mu, mp, g,
-     3   rhoP, N(nsd+1), Ntmp(nsd+1)
+     2   mu, mp, g(nsd), dp,
+     3   rhoP, N(nsd+1), Ntmp(nsd+1), tt(4)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
-      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
+      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom
+      INTEGER :: a, Ac
 
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
+      g(3)=-10D0
 
-      mat => ns%s%mat
-      msh => ns%s%dmn%msh(1)
+      tmpprt = prt
+      msh => prt%dmn%msh(1)
       p  => prt%dat(idp)
       sb => prt%sb
-      tp => tmpprt%dat
+      tp => tmpprt%dat(1)
+      u => prt%Uns
       tmpprt%sb = sb
+      rhoF  = prt%mns%rho()
+      rhoP  = prt%mat%rho()
+      mu    = prt%mns%mu()
+      dp    = prt%mat%D()
+      mp = pi*rhoP/6D0*dp**3D0
 
-      p%xo = p%x
-      p%uo = p%u
       p%eIDo = p%eID
       p%sbIDo= p%sbID
 
-!     Find which searchbox particle is in
-      p%sbID = sb%id(p%x)
-!     Get shape functions/element of particle
-      N = prt%shapeF(idp, msh)
+ 1    CONTINUE
+
+ !!! Show Esmaily (but eventually take out)
+      !tt = msh%fa(2)%NAtx((/.005D0,0.105D0,0D0/),
+      !2 msh%x(:,msh%fa(2)%IEN(:,1)))
+
+
+      IF (p%wall) THEN
+!           Find which searchbox particle is in
+            p%sbID = sb%id(p%x)
+!           Get shape functions/element of particle
+            N = prt%shapeF(idp, msh)
+      END IF
 
 !     Get drag acceleration
-      apd = prt%drag(idp,ns)
+      apd = prt%drag(idp)
 !     Total acceleration (just drag and buoyancy now)
       apT = apd + g*(1D0 - rhoF/rhoP)
 !     2nd order advance (Heun's Method)
 !     Predictor
-      pvelpred = p%u + dt*apT
-      prtxpred = p%x + dt*p%u
-      tp(1)%u  = pvelpred 
-      tp(1)%x  = prtxpred
+      pvelpred = p%u + p%remdt*apT
+      prtxpred = p%x + p%remdt*p%u
+      tp%u  = pvelpred
+      !if (idp.eq.2) tp%u = -pvelpred!!!!!!!!!!!!!!
+      tp%x  = prtxpred
+
 !     Find which searchbox prediction is in
-      tp(1)%sbID = sb%id(tp(1)%x)
+      tp%sbID = sb%id(tp%x)
+
 !     Get shape functions/element of prediction
       Ntmp = tmpprt%shapeF(1, msh)
+
+!     Check if predictor OOB
+      IF (ANY(Ntmp.lt.0)) THEN
+!     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
+            CALL prt%findwl(idp,msh)
+            CALL prt%wall(idp,msh)
+            p%x = p%x + p%remdt*p%u
+            p%wall = .TRUE.
+            RETURN
+      END IF
+
 !     Get drag acceleration of predicted particle
-      apdpred = tmpprt%drag(1,ns)
+      apdpred = tmpprt%drag(1)
+      !if (idp.eq.2) apdpred = -apdpred!!!!!!!!!!!!!!!
       apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !     Corrector
-      p%u = p%u + 0.5D0*dt*(apT+apTpred)
-      p%x = dt*p%u + p%x
+      p%u = p%u + 0.5D0*p%remdt*(apT+apTpred)
+      p%x = p%remdt*p%u + p%x
+
+!     Send drag to fluid
+      DO a=1,msh%eNoN
+            Ac = msh%IEN(a,p%eID)
+            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
+      END DO
+
+      IF (prt%itr .EQ. 0) THEN
+            tmpwr = 0.5*(apd+apdpred)
+            write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
+            !print *, sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
+            !mom =prt%dmn%msh(1)%integ(u%v, 3)
+            !print *, mom
+            !call sleep(1)
+      END IF
+
+!     Check if particle went out of bounds
+      p%sbID = sb%id(p%x)
+      N = prt%shapeF(idp, msh)
+
+      IF (ANY(N .lt. 0)) THEN
+            p%x = p%xo
+            CALL prt%findwl(idp,msh)
+            CALL prt%wall(idp,msh)
+            p%x = p%x + p%remdt*p%u
+            p%wall = .TRUE.
+            RETURN
+      END IF
+
+      p%wall = .FALSE.
+      RETURN
 
       END SUBROUTINE advPrt
 !--------------------------------------------------------------------
-      SUBROUTINE solvePrt(prt, ns)
+      SUBROUTINE solvePrt(eq)
       IMPLICIT NONE
-      CLASS(prtType), INTENT(INOUT), TARGET :: prt
-      CLASS(ceqType), INTENT(IN) :: ns
+      CLASS(prtType), INTENT(INOUT):: eq
       INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
-      REAL(KIND=8) rhoF,
-     2   mu, mp,
-     3   rhoP, N(nsd+1), Ntmp(nsd+1)
-      TYPE(sbType), POINTER :: sb
       TYPE(mshType), POINTER :: lM
-      TYPE(pRawType), POINTER :: p(:),tp(:)
-      TYPE(prtType), TARGET :: tmpprt
 !     Particle/fluid Parameters
-      REAL(KIND=8) :: g(nsd), dtp,maxdtp,sbdt(nsd), dp, taup
-!     Derived from flow
-      REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
-!     RK2 stuff
-      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd)
+      REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
+     2 P1, P2
 
-!     Gravity
-!!!!! Find where grav actually is? (maybe mat%body forces)
-      g=0D0
+      lM => eq%dmn%msh(1)
+      rhoP  = eq%mat%rho()
+      mu    = eq%mns%mu()
+      dp    = eq%mat%D()
 
-!     Initialize if haven't yet
-      IF(.NOT.prt%crtd) THEN
-            CALL prt%new(1)
-      END IF
-      CALL tmpprt%new(1)
-      
-      ALLOCATE(tp(tmpprt%n))
-      ALLOCATE(p(prt%n))
-      lM => ns%s%dmn%msh(1)
-      p  => prt%dat
-      tp => tmpprt%dat
-      sb => prt%sb
-      rhoF  = ns%s%mat%rho()
-      rhoP  = prt%mat%rho()
-      mu    = ns%s%mat%mu()
-      dp    = prt%mat%D()
+!     Reset twc force to zero
+      eq%twc%v(:,:) = 0D0
+
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
 
-      IF (.NOT.(sb%crtd)) THEN
-         CALL sb%new(lM)
-      END IF
-      tmpprt%sb = sb
-
-!!!!! get time step broken down to be dictated by either fastest velocity(in terms of sb's traveled), relax time, overall solver dt
-!!! idea: do one more loop through all particles above this one and get time step for each one, then take minimum
-!!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it sb so I can only check neighboring sb's
+!!!!! get time step broken down to be dictated by either fastest velocity(in terms of eq%sb's traveled), relax time, overall solver dt
+!!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
+!!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it eq%sb so I can only check neighboring eq%sb's
 
 !     Appropriate time step
       dtp = MIN(taup,dt)
 !     Subiterations
       subit = FLOOR(dt/dtp)
       dtp = dt/subit
-      prt%dt = dtp
+      eq%dt = dtp
 
       DO l = 1,subit
-      DO i = 1,prt%n
-!     Old velocity and position and eID
-      p(i)%xo = p(i)%x
-      p(i)%uo = p(i)%u
-      p(i)%eIDo = p(i)%eID
-      p(i)%sbIDo= p(i)%sbID
 
-!     If particles haven't exited domain (or it's the first iter) their sbID is known
-      IF (p(i)%sbID(1) .eq. 0) THEN
-!        Find which searchbox particle is in
-         p(i)%sbID = sb%id(p(i)%x)
-!        Get shape functions/element of particle
-         N = prt%shapeF(i, lM)
-      END IF
+      DO i=1,eq%n
 
-!        Get drag acceleration
-         apd = prt%drag(i,ns)
-!        Total acceleration (just drag and buoyancy now)
-         apT = apd + g*(1D0 - rhoF/rhoP)
-!        2nd order advance (Heun's Method)
-!        Predictor
-         pvelpred = p(i)%u + dtp*apT
-         prtxpred = p(i)%x + dtp*p(i)%u
-         tp(1)%u  = pvelpred 
-         tp(1)%x  = prtxpred
-!        Find which searchbox prediction is in
-         tp(1)%sbID = sb%id(tp(1)%x)
-!        Get shape functions/element of prediction
-         Ntmp = tmpprt%shapeF(1, lM)
-!!! check if outside domain
-!        Get drag acceleration of predicted particle
-         apdpred = tmpprt%drag(1,ns)
-         apTpred = apdpred + g*(1D0 - rhoF/rhoP)
-         !IF (ANY(Ntmp.lt.))
-!        Corrector
-         p(i)%u = p(i)%u + 0.5D0*dtp*(apT+apTpred)
-      call prt%findwl(i,lM)
-      END DO
+!     If it's the first iteration, update last velocity, position
+            IF (eq%itr .EQ. 0) THEN
+                  eq%dat(i)%xo = eq%dat(i)%x
+                  eq%dat(i)%uo = eq%dat(i)%u
+            ENDIF
 
-      !!! REALLY need to figure out how to make it so it only checks for collisions in the same searchbox
-      DO i=1,prt%n
-!        Collisions
-         DO j=1,prt%n
-!        Check if the particle collides with any other particles and hasn't collided. Advance if so.
-            IF ((i.ne.j).and.(.not.(p(i)%collided))) THEN
-                CALL prt%collide(i,j,dtp,lM)
+!     Set position and velocity to old variables in preparation for iteration with INS
+            eq%dat(i)%x = eq%dat(i)%xo
+            eq%dat(i)%u = eq%dat(i)%uo
+
+!     Set initial advancing time step to solver time step
+            eq%dat(i)%remdt = dtp
+!     Collisions
+            DO j=1,eq%n
+!     Check if the particle collides with any other particles and hasn't collided. Advance to collision location
+            IF ((i.ne.j).and.(.not.(eq%dat(i)%collided))) THEN
+                  CALL eq%collide(i,j,dtp,lM)
             END IF
-         ENDDO
+            ENDDO
+      ENDDO
 
-!        If particles haven't collided, advance by vel*dtp
-         IF (.not.(p(i)%collided)) THEN
-            p(i)%x = dtp*p(i)%u + p(i)%x
-!           Check if particles are still in domain
-!!!!!! Use previous element id here eventually
-!           Find which searchbox particle is in
-            p(i)%sbID = sb%id(p(i)%x)
-!           Get shape functions/element of particle
-            N = prt%shapeF(i, lM)
-            !IF ANY(N.lt.0)
-!!!!!!!!!!!!!!!!!!!!!!!!!!!!!! wall prt 
-         END IF
-
-!        Reset if particles have collided
-         p(i)%collided = .false.
-
-         print *, p(i)%x
+      DO i = 1,eq%n
+            CALL eq%adv(i)
+            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
+     2            eq%dat(i)%u(3) ,eq%dat(i)%x(2)      
+!           Reset if particles have collided
+            eq%dat(i)%collided = .false.
       END DO
-      END DO
+            
+      P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
+      P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
+
+      IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u(3), !eq%dat(2)%u
+     2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
+     3 eq%dat(1)%x(2),
+!     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
+!     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
+!     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
+     6  P1,P2
+      ENDDO
+
+!     Updating norm for solution control
+      CALL eq%upNorm(eq%ls%RI%iNorm)
+      
+!     Checking for exceptions
+      CALL io%w%checkException()
 
       RETURN
       END SUBROUTINE solvePrt
@@ -1146,4 +1157,5 @@
 
       !!!! Urgent fixes after wall:
       !!!! Add in so it only checks in same searchbox
-      !!!! Add in so, to find element particle is in, it checks first element from last time
+      !!!! Mult collisions per step
+      !!! Right now doesn't consider collisions after other collisions (wall or particle)

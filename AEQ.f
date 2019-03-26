@@ -15,6 +15,7 @@
       USE LEDMOD
       USE FSIMOD
       USE BBOMOD
+      USE PRTMOD
       IMPLICIT NONE
 
 !     Number of equations
@@ -83,6 +84,10 @@
                ALLOCATE(eq(iEq)%s,SOURCE=ledType(dmn, lPtr, 
      2            isMsh=.TRUE.))
             END IF
+         CASE('prt')
+            IF (.NOT.ASSOCIATED(ns)) io%e = "PRT must come after INS"
+            ALLOCATE(eq(iEq)%s,SOURCE=
+     2          prtType(dmn,lPtr,ns%U,ns%mat,ns%twc, ns%P))
          CASE DEFAULT
             io%e = "Equation type "//TRIM(ctmp)//" is not defined"
          END SELECT

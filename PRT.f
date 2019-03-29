@@ -276,7 +276,7 @@
 
  !!     ! Will need to replace eventually with something that targets element size
 
-      split=(/2,2,2/)
+      split=(/3,3,3/)
       sb%n=split
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
@@ -298,7 +298,8 @@
       sb%step=(diff)/((sb%n+1D0)/2D0) 
 
       ! Tolerance
-      eps = sb%step
+      eps = diff  !!!! This tolerance has to be this large because of my algorithm for locating which searchbox the particle is in
+                  !!! I could, however, possibly make it a function of the split
       sb%step=(diff+eps)/((sb%n+1D0)/2D0) 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
@@ -438,7 +439,7 @@
          iSb(7) = iSb(5) - sb%n(1)
          iSb(8) = iSb(7) - 1
       end if
-      
+
       RETURN
       END FUNCTION idSB
 !--------------------------------------------------------------------
@@ -495,9 +496,9 @@
            CALL RANDOM_NUMBER(p%x(:))
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
-           p%x(1) = 0D0
-           p%x(2) = 0D0
-           p%x(3) = 28.5D0/ip
+           p%x(1) = 1.99D0
+           p%x(2) = 0.001D0
+           p%x(3) = 0.005D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -677,9 +678,11 @@
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
       REAL(KIND=8) :: Jac, xXi(nsd,nsd), Am(nsd,nsd), x1(nsd), tc
-      REAL(KIND=8) :: N(msh%fa(1)%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
-      INTEGER :: ii, jj, a
-      REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac
+      REAL(KIND=8) :: N(msh%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
+      INTEGER :: ii, jj, a,gEl, faceNS(1,msh%fa(1)%eNoN), cnt,kk,ll
+     2 , faceN(msh%fa(1)%eNoN),facev
+      REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac,
+     2 xl(nsd,msh%eNoN)
 
       p => prt%dat(idp)
       b => prt%sb%box(MINVAL(p%sbID, MASK = p%sbID.gt.0))
@@ -688,23 +691,39 @@
 
       faceloop: DO ii=1,msh%nFa
       DO jj=1,size(b%fa(ii)%els)
+!           First we need to find the volumetric element associated with the face, and get x's associated with that
+            gEl = msh%fa(ii)%gE(b%fa(ii)%els(jj))
+            xl = msh%x(:,msh%IEN(:,gEl))
+!           Next, we find which face of the volumetric element is the face element
+            out: DO  kk= 1, msh%fa(ii)%eNoN
+                  cnt = 1
+                  DO ll = 1,msh%eNoN 
+                        IF (msh%IEN(ll,gEl) .eq.
+     2     msh%fa(ii)%IEN(kk,b%fa(ii)%els(jj))) THEN
+                              faceNS(1,kk) = cnt
+                              CYCLE out
+                        ENDIF
+                        cnt = cnt+1
+                  ENDDO
+            ENDDO out
+
+            CALL QSORT(faceNS)
+            faceN = faceNS(1,:)
 
             xXi = 0D0
             Bm = 0D0
             x1 = 0D0
-            DO a=1, msh%fa(ii)%eNoN 
+
+!           Same process as NAtxEle for vol element
+            DO a=1, msh%eNoN 
                   xXi(:,1) = xXi(:,1) +
-     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
-     3          *msh%fa(ii)%Nx(1,a,1)
+     2          xl(:,a) * msh%Nx(1,a,1)
                   xXi(:,2) = xXi(:,2) +
-     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
-     3          *msh%fa(ii)%Nx(2,a,1)
+     2          xl(:,a) * msh%Nx(2,a,1)
                   xXi(:,3) = xXi(:,3) +
-     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
-     3          *msh%fa(ii)%Nx(3,a,1)
+     2          xl(:,a) * msh%Nx(3,a,1)   
 !           Location of Gauss point (for Bm)
-                  x1 = x1 + msh%fa(ii)%N(a,1)*
-     2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
+                  x1 = x1 + msh%N(a,1)*xl(:,a)
             ENDDO
 
             Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
@@ -714,32 +733,6 @@
      5      - xXi(1,2)*xXi(2,1)*xXi(3,3)
      6      - xXi(1,3)*xXi(2,2)*xXi(3,1)
             iJac = 1D0/Jac
-
-            IF (Jac .eq. 0) THEN
-            xXi = 0D0
-!     If one of all the coordinates is zero, you get a zero Jacobian
-!     So if this happens I just translate the element,
-!     Because we're just finding derivatives
-            DO a=1, msh%fa(ii)%eNoN
-                  xXi(:,1) = xXi(:,1) +
-     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
-     3          +1) *msh%fa(ii)%Nx(1,a,1)
-                  xXi(:,2) = xXi(:,2) +
-     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
-     3          +1) *msh%fa(ii)%Nx(2,a,1)
-                  xXi(:,3) = xXi(:,3) +
-     2          (msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
-     3          +1) *msh%fa(ii)%Nx(3,a,1)
-            END DO
-
-            Jac = xXi(1,1)*xXi(2,2)*xXi(3,3)
-     2      + xXi(1,2)*xXi(2,3)*xXi(3,1)
-     3      + xXi(1,3)*xXi(2,1)*xXi(3,2)
-     4      - xXi(1,1)*xXi(2,3)*xXi(3,2)
-     5      - xXi(1,2)*xXi(2,1)*xXi(3,3)
-     6      - xXi(1,3)*xXi(2,2)*xXi(3,1)
-            iJac = 1D0/Jac
-            END IF
 
           Am(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))*iJac
           Am(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))*iJac
@@ -757,68 +750,218 @@
              END DO
 
 !           Finding B = xi_1 - A*x_1
-            Bm = msh%fa(ii)%xi(:,1) - Bm
+            Bm = msh%xi(:,1) - Bm
 
-!           Finding time such that xi(3) = 0
-            tc = -(Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
+!     Now, knowing the face, we have information about the value of one parent coordinate
+!     Which we can use to solve for tc. Then we can find the particle at point of collision 
+!     with the plane in which the wall face is in. This is the same concept as NAtx, except
+!     we're imposing the condition that xc will be on the same plane as the face we're checking
+
+!     3D elements
+      SELECT CASE(msh%eType)
+      CASE(eType_BRK)
+!     +y
+      IF (ALL(faceN .eq. (/1,2,3,4/))) facev=1
+!     +z
+      IF (ALL(faceN .eq. (/1,2,5,6/))) facev=2
+!     +x
+      IF (ALL(faceN .eq. (/1,4,5,8/))) facev=3
+!     -y
+      IF (ALL(faceN .eq. (/5,6,7,8/))) facev=4
+!     -z
+      IF (ALL(faceN .eq. (/3,4,7,8/))) facev=5
+!     -x
+      IF (ALL(faceN .eq. (/2,3,6,7/))) facev=6
+
+      SELECT CASE(facev)
+
+      !     +y
+            CASE(1)
+      xi(2) = 1
+      tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
+     2  + Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+
+      !     +z
+            CASE(2)
+      xi(3) = 1
+      tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
      2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
-
-            xc = (p%x + p%u*tc)
-
-!           Finding parent coordinates
+      xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
-      
-! Taken from NatxiEle (private)
-      !     3D elements (not possible)
-            SELECT CASE(msh%fa(ii)%eType)
 
-      !     2D elements         
-            CASE(eType_TRI)
-               N(1) = xi(1)
-               N(2) = xi(2)
-               N(3) = 1D0 - xi(1) - xi(2)
-            CASE(eType_BIL)
-               ux = 1D0 + xi(1)
-               uy = 1D0 + xi(2)
-               lx = 1D0 - xi(1)
-               ly = 1D0 - xi(2)
-               
-               N(1) = ux*uy/4D0
-               N(2) = lx*uy/4D0
-               N(3) = lx*ly/4D0
-               N(4) = ux*ly/4D0
-            CASE(eType_BIQ)
-               ux = 1D0 + xi(1)
-               uy = 1D0 + xi(2)
-               lx = 1D0 - xi(1)
-               ly = 1D0 - xi(2)
-               mx = xi(1)
-               my = xi(2)
-               
-               N(1) =  mx*lx*my*ly/4D0
-               N(2) = -mx*ux*my*ly/4D0
-               N(3) =  mx*ux*my*uy/4D0
-               N(4) = -mx*lx*my*uy/4D0
-               N(5) = -lx*ux*my*ly/2D0
-               N(6) =  mx*ux*ly*uy/2D0
-               N(7) =  lx*ux*my*uy/2D0
-               N(8) = -mx*lx*ly*uy/2D0
-               N(9) =  lx*ux*ly*uy
+      !     +x
+            CASE(3)
+      xi(1) = 1
+      tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
+     2  + Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
+
+      !     -y
+            CASE(4)
+      xi(2) = -1
+      tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
+     2  + Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+
+      !     -z
+            CASE(5)
+      xi(3) = -1
+      tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
+     2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
+
+      !     -x
+            CASE(6)
+      xi(1) = -1
+      tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
+     2  + Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
+
+      END SELECT
+
+            ux = 1D0 + xi(1)
+            uy = 1D0 + xi(2)
+            uz = 1D0 + xi(3)
+            lx = 1D0 - xi(1)
+            ly = 1D0 - xi(2)
+            lz = 1D0 - xi(3)
       
-      !     1D elements         
-            CASE(eType_LIN)
-               N(1) = (1D0 - xi(1))/2D0
-               N(2) = (1D0 + xi(1))/2D0
-            CASE(eType_QUD)
-               N(1) = -xi(1)*(1D0 - xi(1))/2D0
-               N(2) =  xi(1)*(1D0 + xi(1))/2D0
-               N(3) = (1D0 - xi(1))*(1D0 + xi(1))
-            END SELECT
+            N(1) = ux*uy*uz/8D0
+            N(2) = lx*uy*uz/8D0
+            N(3) = lx*uy*lz/8D0
+            N(4) = ux*uy*lz/8D0
+            N(5) = ux*ly*uz/8D0
+            N(6) = lx*ly*uz/8D0
+            N(7) = lx*ly*lz/8D0
+            N(8) = ux*ly*lz/8D0
+      CASE(eType_TET)
+            IF (ALL(faceN .eq. (/1,2,3/))) facev = 1
+            IF (ALL(faceN .eq. (/1,2,4/))) facev = 2
+            IF (ALL(faceN .eq. (/1,3,4/))) facev = 3
+            IF (ALL(faceN .eq. (/2,3,4/))) facev = 4
+
+      SELECT CASE(facev)
+            CASE(1)
+!           This is the hard one. All xi sum to 1
+            tc = (1 - p%x(1) * (Am(1,1)+Am(2,1)+Am(3,1))-
+     2                p%x(2) * (Am(1,2)+Am(2,2)+Am(3,2))-
+     3                p%x(3) * (Am(1,3)+Am(2,3)+Am(3,3))- 
+     4                (Bm(1)+Bm(2)+Bm(3)))/
+     5              ( p%u(1) * (Am(1,1)+Am(2,1)+Am(3,1))+
+     6                p%u(2) * (Am(1,2)+Am(2,2)+Am(3,2))+
+     7                p%u(3) * (Am(1,3)+Am(2,3)+Am(3,3)))
+      xc = (p%x + p%u*tc)
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
+      xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+          
+            CASE(2)
+            xi(3) = 0
+      tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
+     2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)          
+
+            CASE(3)
+            xi(2) = 0
+      tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
+     2  + Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
+      xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+
+            CASE(4)
+            xi(1) = 0
+      tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
+     2  + Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
+      xc = (p%x + p%u*tc)
+      xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)  
+
+      END SELECT
+
+            N(1) = xi(1)
+            N(2) = xi(2)
+            N(3) = xi(3)
+            N(4) = 1D0 - xi(1) - xi(2) - xi(3)
+      CASE(eType_WDG)
+      io%e ="partcles not added for this element type"
+            ux = xi(1)
+            uy = xi(2)
+            uz = 1D0 - xi(1) - xi(2)
+            s  = (1D0 + xi(3))/2D0
+            t  = (1D0 - xi(3))/2D0
+                  
+            N(1) = ux*t
+            N(2) = uy*t
+            N(3) = uz*t
+            N(4) = ux*s
+            N(5) = uy*s
+            N(6) = uz*s      
+!     2D elements         
+      CASE(eType_TRI)
+      io%e="partcles not added for this element type"
+         N(1) = xi(1)
+         N(2) = xi(2)
+               N(3) = 1D0 - xi(1) - xi(2)
+      CASE(eType_BIL)
+      io%e="partcles not added for this element type"
+         ux = 1D0 + xi(1)
+         uy = 1D0 + xi(2)
+         lx = 1D0 - xi(1)
+         ly = 1D0 - xi(2)
+               
+         N(1) = ux*uy/4D0
+         N(2) = lx*uy/4D0
+         N(3) = lx*ly/4D0
+         N(4) = ux*ly/4D0
+      CASE(eType_BIQ)
+      io%e="partcles not added for this element type"
+         ux = 1D0 + xi(1)
+         uy = 1D0 + xi(2)
+         lx = 1D0 - xi(1)
+         ly = 1D0 - xi(2)
+         mx = xi(1)
+         my = xi(2)
+               
+         N(1) =  mx*lx*my*ly/4D0
+         N(2) = -mx*ux*my*ly/4D0
+         N(3) =  mx*ux*my*uy/4D0
+         N(4) = -mx*lx*my*uy/4D0
+         N(5) = -lx*ux*my*ly/2D0
+         N(6) =  mx*ux*ly*uy/2D0
+         N(7) =  lx*ux*my*uy/2D0
+         N(8) = -mx*lx*ly*uy/2D0
+         N(9) =  lx*ux*ly*uy
+      
+!     1D elements         
+      CASE(eType_LIN)
+      io%e="partcles not added for this element type"
+         N(1) = (1D0 - xi(1))/2D0
+         N(2) = (1D0 + xi(1))/2D0
+      CASE(eType_QUD)
+      io%e="partcles not added for this element type"
+         N(1) = -xi(1)*(1D0 - xi(1))/2D0
+         N(2) =  xi(1)*(1D0 + xi(1))/2D0
+         N(3) = (1D0 - xi(1))*(1D0 + xi(1))
+      END SELECT
 
 ! End NatxiEle
 
-            IF (ALL(N.ge.0D0).and. (tc.ge.1D-7)
+            IF (ALL(N.ge.-1D-7).and. (tc.ge.-1D-7)
      2      .and. tc.lt.prt%dt) THEN
                   p%faID(1) = ii
                   p%faID(2) = b%fa(ii)%els(jj)
@@ -1038,8 +1181,8 @@
 !     Send drag to fluid
       DO a=1,msh%eNoN
             Ac = msh%IEN(a,p%eID)
-!            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
-!     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
+            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
 
       IF (prt%itr .EQ. 0) THEN

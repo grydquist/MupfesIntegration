@@ -233,7 +233,7 @@
       INTEGER i,a, Ac,cnt
       REAL(KIND=8), ALLOCATABLE :: volt(:)
 
-      open(88,file='pos.txt') !! For data output
+      open(88,file='pos.txt') 
 
       ALLOCATE(volt(eq%dmn%msh(1)%eNon))
       ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n),eq%wV(eq%dmn%msh(1)%nNo))
@@ -293,11 +293,13 @@
       diff(1)=MAXVAL(msh%x(1,:))-MINVAL(msh%x(1,:))
       diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
       diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
-      ! Tolerance
-      eps = 0.5*diff
-      ! Size of sb
-      sb%step=diff/((sb%n+1)/2) + eps
 
+      ! Size of sb
+      sb%step=(diff)/((sb%n+1D0)/2D0) 
+
+      ! Tolerance
+      eps = sb%step
+      sb%step=(diff+eps)/((sb%n+1D0)/2D0) 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
       do ii=1,sb%n(1)*sb%n(3)
@@ -452,17 +454,19 @@
       INTEGER :: ii, ind
 
       p => prt%dat(ip)
-      b => prt%sb%box(p%sbID(1))
+      b => prt%sb%box(MINVAL(p%sbID, MASK = p%sbID.gt.0))
 
       do ii=1,size(b%els)+1
-
-            ind = b%els(ii-1)
-            if (ii.eq.1) ind = p%eIDo
-
+            
+            IF (ii.eq.1) THEN
+                  ind = p%eIDo
+            ELSE
+                  ind = b%els(ii-1)
+            END IF
             N = msh%nAtx(p%x,msh%x(:,msh%IEN(:,ind)))
 
             ! Checking if all shape functions are positive
-            IF (ALL(N.ge.0D0)) then
+            IF (ALL(N.ge.-1.0D-7)) then
                   p%eID=ind
                   p%N = N
                   EXIT
@@ -493,7 +497,7 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0D0
-           p%x(3) = 29.5D0/ip
+           p%x(3) = 28.5D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -548,7 +552,7 @@
       ! Reynolds Number
       Rep = dp*magud*rhoF/mu
       ! Schiller-Neumann (finite Re) correction
-      fSN = 1D0 + 0.15D0*Rep**0.687D0
+      fSN = 1D0 !+ 0.15D0*Rep**0.687D0   !!!
       ! Stokes corrected drag force
       apD = fSN/taup*relvel
 
@@ -678,7 +682,7 @@
       REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac
 
       p => prt%dat(idp)
-      b => prt%sb%box(p%sbID(1))
+      b => prt%sb%box(MINVAL(p%sbID, MASK = p%sbID.gt.0))
 
       p%faID = 0
 
@@ -688,8 +692,7 @@
             xXi = 0D0
             Bm = 0D0
             x1 = 0D0
-      !     Setting up matrix for inversion
-            DO a=1, msh%fa(ii)%eNoN !! Only for tets
+            DO a=1, msh%fa(ii)%eNoN 
                   xXi(:,1) = xXi(:,1) +
      2          msh%x(:,msh%fa(ii)%IEN(a,b%fa(ii)%els(jj)))
      3          *msh%fa(ii)%Nx(1,a,1)
@@ -815,7 +818,7 @@
 
 ! End NatxiEle
 
-            IF (ALL(N.ge.0D0).and. (tc.gt.0)
+            IF (ALL(N.ge.0D0).and. (tc.ge.1D-7)
      2      .and. tc.lt.prt%dt) THEN
                   p%faID(1) = ii
                   p%faID(2) = b%fa(ii)%els(jj)
@@ -965,8 +968,7 @@
 !     Gravity
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
-      g(3)=-10D0
-
+      g(3)=-1D0
       tmpprt = prt
       msh => prt%dmn%msh(1)
       p  => prt%dat(idp)
@@ -983,7 +985,7 @@
       p%eIDo = p%eID
       p%sbIDo= p%sbID
 
- 1    CONTINUE
+! 1    CONTINUE !!!
 
  !!! Show Esmaily (but eventually take out)
       !tt = msh%fa(2)%NAtx((/.005D0,0.105D0,0D0/),
@@ -1016,7 +1018,7 @@
       Ntmp = tmpprt%shapeF(1, msh)
 
 !     Check if predictor OOB
-      IF (ANY(Ntmp.lt.0)) THEN
+      IF (ANY(Ntmp.le.-1D-7)) THEN
 !     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
             CALL prt%findwl(idp,msh)
             CALL prt%wall(idp,msh)
@@ -1036,8 +1038,8 @@
 !     Send drag to fluid
       DO a=1,msh%eNoN
             Ac = msh%IEN(a,p%eID)
-            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
-     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
+!            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+!     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
 
       IF (prt%itr .EQ. 0) THEN
@@ -1053,7 +1055,7 @@
       p%sbID = sb%id(p%x)
       N = prt%shapeF(idp, msh)
 
-      IF (ANY(N .lt. 0)) THEN
+      IF (ANY(N .le. -1D-7)) THEN
             p%x = p%xo
             CALL prt%findwl(idp,msh)
             CALL prt%wall(idp,msh)
@@ -1126,7 +1128,7 @@
       DO i = 1,eq%n
             CALL eq%adv(i)
             IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
-     2            eq%dat(i)%u(3) ,eq%dat(i)%x(2)      
+     2            eq%dat(i)%u(3) ,taup    
 !           Reset if particles have collided
             eq%dat(i)%collided = .false.
       END DO
@@ -1136,11 +1138,11 @@
 
       IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u(3), !eq%dat(2)%u
      2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
-     3 eq%dat(1)%x(2),
+     3 time
 !     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
 !     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
 !     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
-     6  P1,P2
+     6  ,P1,P2
       ENDDO
 
 !     Updating norm for solution control

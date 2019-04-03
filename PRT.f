@@ -113,6 +113,12 @@
          TYPE(varType), POINTER :: twc => NULL()
 !     Weighted volume
          REAL(KIND=8), ALLOCATABLE :: wV(:)
+!     Collision counter
+         INTEGER :: collcnt
+!     List of collision pairs
+         INTEGER, ALLOCATABLE :: collpair(:,:)
+!     Time of collision pairs
+         REAL(KIND=8), ALLOCATABLE :: collt(:)
 
       CONTAINS
 !     Sets up all structure
@@ -125,7 +131,9 @@
          PROCEDURE :: drag => dragPrt
 !     Advance all particles one time step
          PROCEDURE :: solve => solvePrt
-!     Detects and enacts collisions
+!     Detects collisions
+         PROCEDURE :: findcoll => findcollPrt
+!     Enacts collisions
          PROCEDURE :: collide => collidePrt
 !     Finds which wall element the partice collides with
          PROCEDURE :: findwl => findwlPrt
@@ -296,10 +304,10 @@
 
       ! Size of sb
       sb%step=(diff)/((sb%n+1D0)/2D0) 
-
-      ! Tolerance
-      eps = diff  !!!! This tolerance has to be this large because of my algorithm for locating which searchbox the particle is in
-                  !!! I could, however, possibly make it a function of the split
+            
+      ! Tolerance, based off max between searchbox size (for particle going out of bounds)
+      ! and max size needed for id'ing algorithm in idSB
+      eps = MAXVAL((/2*diff/(sb%n-1),sb%step/))
       sb%step=(diff+eps)/((sb%n+1D0)/2D0) 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
@@ -496,9 +504,9 @@
            CALL RANDOM_NUMBER(p%x(:))
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
-           p%x(1) = 1.99D0
+           p%x(1) = 0D0
            p%x(2) = 0.001D0
-           p%x(3) = 0.005D0/ip
+           p%x(3) = 0.31D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -541,10 +549,7 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
-      !fvel = 0
-      !fvel(3) = -3D0!!!!!!!!!!!!!!
-      !fvel(1) = fvel(1)+1
-      !if (ip.eq.2) fvel(3) = 3D0!!!!!!!!
+      fvel = 0
 
       ! Relative velocity
       relvel = fvel - p%u
@@ -559,27 +564,20 @@
 
       END FUNCTION dragPrt
 !--------------------------------------------------------------------
-!     Detects and enacts collisions
-      SUBROUTINE collidePrt(prt,id1,id2,dtp,lM)
+!     Detects and collisions and returns pairs and times
+      SUBROUTINE findcollPrt(prt,id1,id2,lM)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       CLASS(mshType), INTENT(IN) :: lM
       INTEGER, INTENT(IN) :: id1, id2
-      REAL(KIND=8), INTENT(IN) :: dtp
       TYPE(pRawType), POINTER :: p1,p2
 
 !     Calculating distance coefficient
-      REAL(KIND=8) :: a, b, c, d, e, f, qa, qb, qc, zeros(2), tcr
-      REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd)
-      REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, mp, rho, k
-!     Coefficients to make calculating parallel/perp vel easier
-      REAL(KIND=8) :: pa, pb, Np1(nsd+1), Np2(nsd+1) , temp(nsd)
+      REAL(KIND=8) :: a, b, c, d, e, f, qa, qb,qc,zeros(2),tcr,dp
+      REAL(KIND=8) :: Np1(nsd+1), Np2(nsd+1)
 
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
       dp  = prt%mat%D()
-      rho = prt%mat%rho()
-      k   = prt%mat%krest()
-      mp = pi*rho/6D0*dp**3D0
 
 !     First, check if particles will collide at current trajectory
       a = p1%x(1) - p2%x(1)
@@ -610,23 +608,58 @@
 
       tcr = minval(zeros)
 
-      ! Exit function if collision won't occur during timestep
-      if (tcr.gt.dtp) RETURN
+      ! Exit function if collision won't occur during (remaining)timestep
+      if ((tcr.gt.p1%remdt) .and. (tcr.gt.p2%remdt)) 
+     2 RETURN
 
       ! particle locations at point of collision
       p1%xc = p1%u*tcr + p1%x
       p2%xc = p2%u*tcr + p2%x
-      p1%x  = p1%xc
-      p2%x  = p2%xc
+      p1%x = p1%xc ! I change these just so I can use shapeF
+      p2%x = p2%xc ! I change them back below
 
 !     Check if the particle is outside the domain
       Np1 = prt%shapeF(id1, lM)
       Np2 = prt%shapeF(id2, lM)
-      IF (ANY(Np1.lt.0) .or. ANY(Np2.lt.0)) THEN
-            p1%x = p1%xo
-            p2%x = p2%xo
+
+      p1%x = p1%xo
+      p1%x = p1%xo
+
+      IF (ANY(Np1.lt.-1D-7) .or. ANY(Np2.lt.-1D-7)) THEN
             RETURN
       END IF
+
+      p1%ti = tcr
+      p2%ti = tcr
+
+      p1%collided = .true.
+      p2%collided = .true.
+
+      prt%collcnt = prt%collcnt+1
+
+      END SUBROUTINE findcollPrt
+
+!--------------------------------------------------------------------
+      SUBROUTINE collidePrt(prt,id1,id2)
+      CLASS(prtType), INTENT(IN), TARGET :: prt
+      INTEGER, INTENT(IN) :: id1, id2
+      TYPE(pRawType), POINTER :: p1,p2
+
+!     Coefficients to make calculating parallel/perp vel easier
+      REAL(KIND=8) :: vpar1, vpar2, vperp1, vperp2, dp, rho, k,mp
+      REAL(KIND=8) :: n1(nsd), n2(nsd), t1(nsd), t2(nsd)
+      REAL(KIND=8) :: pa, pb, temp(nsd)
+      
+      p1 => prt%dat(id1)
+      p2 => prt%dat(id2)
+      dp  = prt%mat%D()
+      rho = prt%mat%rho()
+      k   = prt%mat%krest()
+      mp = pi*rho/6D0*dp**3D0
+
+      ! Update location to collision location
+      p1%x = p1%xc
+      p2%x = p2%xc
 
       ! Vector parallel and pependicular to collision tangent line
       n1 = (p1%xc - p2%xc)/((dp + dp)/2)
@@ -656,18 +689,18 @@
 
       ! V here is split into just two velocities, so just add them as vector
 
-      p1%u = vpar1*n1 + vperp1*t1
-      p2%u = vpar2*n2 + vperp2*t2
-            
-      ! particle velocities at point of collision
-      p1%uc = p1%u
-      p2%uc = p2%u
+      p1%uc = vpar1*n1 + vperp1*t1
+      p2%uc = vpar2*n2 + vperp2*t2
 
-      p1%collided = .true.
-      p2%collided = .true.
+      p1%u = p1%uc
+      p2%u = p2%uc
 
-      p1%remdt = p1%remdt-tcr
-      p2%remdt = p2%remdt-tcr
+      p1%remdt = p1%remdt-p1%ti
+      p2%remdt = p2%remdt-p2%ti
+
+      p1%collided = .false.
+      p2%collided = .false.
+
 
       END SUBROUTINE collidePrt
 !--------------------------------------------------------------------
@@ -1112,6 +1145,7 @@
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
       g(3)=-1D0
+      if (prt%ptr(idp) .eq. 2) g=-g
       tmpprt = prt
       msh => prt%dmn%msh(1)
       p  => prt%dat(idp)
@@ -1127,12 +1161,6 @@
 
       p%eIDo = p%eID
       p%sbIDo= p%sbID
-
-! 1    CONTINUE !!!
-
- !!! Show Esmaily (but eventually take out)
-      !tt = msh%fa(2)%NAtx((/.005D0,0.105D0,0D0/),
-      !2 msh%x(:,msh%fa(2)%IEN(:,1)))
 
 
       IF (p%wall) THEN
@@ -1151,15 +1179,13 @@
       pvelpred = p%u + p%remdt*apT
       prtxpred = p%x + p%remdt*p%u
       tp%u  = pvelpred
-      !if (idp.eq.2) tp%u = -pvelpred!!!!!!!!!!!!!!
       tp%x  = prtxpred
 
 !     Find which searchbox prediction is in
-      tp%sbID = sb%id(tp%x)
+      tp%sbID = sb%id(tp%x)   !!!!!!!!!!!!! For some reason this changes apT???? Does not make any sense to me at all
 
 !     Get shape functions/element of prediction
       Ntmp = tmpprt%shapeF(1, msh)
-
 !     Check if predictor OOB
       IF (ANY(Ntmp.le.-1D-7)) THEN
 !     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
@@ -1169,10 +1195,11 @@
             p%wall = .TRUE.
             RETURN
       END IF
+!     Total acceleration (just drag and buoyancy now) ! again, because above changes this for some reason
+      apT = apd + g*(1D0 - rhoF/rhoP)
 
 !     Get drag acceleration of predicted particle
       apdpred = tmpprt%drag(1)
-      !if (idp.eq.2) apdpred = -apdpred!!!!!!!!!!!!!!!
       apTpred = apdpred + g*(1D0 - rhoF/rhoP)
 !     Corrector
       p%u = p%u + 0.5D0*p%remdt*(apT+apTpred)
@@ -1181,9 +1208,11 @@
 !     Send drag to fluid
       DO a=1,msh%eNoN
             Ac = msh%IEN(a,p%eID)
-            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
-     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
+!            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+!     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
+
+      IF (time.lt.0.04) prt%twc%v(1,1) = 1D0
 
       IF (prt%itr .EQ. 0) THEN
             tmpwr = 0.5*(apd+apdpred)
@@ -1229,6 +1258,9 @@
 !     Reset twc force to zero
       eq%twc%v(:,:) = 0D0
 
+!     Reset collision counter
+      eq%collcnt = 0
+
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
 
@@ -1259,11 +1291,15 @@
 
 !     Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
-!     Collisions
+      ENDDO
+
+      DO i = 1,eq%n
+      !     Collisions
             DO j=1,eq%n
 !     Check if the particle collides with any other particles and hasn't collided. Advance to collision location
             IF ((i.ne.j).and.(.not.(eq%dat(i)%collided))) THEN
-                  CALL eq%collide(i,j,dtp,lM)
+                  CALL eq%findcoll(i,j,lM)
+                  IF (eq%dat(i)%collided) CALL eq%collide(i,j)
             END IF
             ENDDO
       ENDDO

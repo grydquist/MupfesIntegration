@@ -79,8 +79,6 @@
          REAL(KIND=8) :: uc(3) = 0D0
 !     Shape functions in current element
          REAL(KIND=8), ALLOCATABLE :: N(:)
-!     Has this particle collided during the current time step?
-         LOGICAL :: collided = .FALSE.
 !     Remaining time in timestep after collision
          REAL(KIND=8) :: remdt
 !     Time until collision
@@ -245,6 +243,7 @@
 
       ALLOCATE(volt(eq%dmn%msh(1)%eNon))
       ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n),eq%wV(eq%dmn%msh(1)%nNo))
+      ALLOCATE(eq%collt(eq%n**2),eq%collpair(eq%n**2,2))
 
       eq%wV = 0D0
       cnt =0
@@ -509,7 +508,8 @@
            p%x(3) = 0.31D0/ip
            prt%dat(ip) = p
       END DO
-
+      prt%dat(3)%x(3) = 0.2326D0
+      prt%dat(3)%x(2) = 0.1D0
 
       RETURN
       END SUBROUTINE seedPrt
@@ -566,7 +566,7 @@
 !--------------------------------------------------------------------
 !     Detects and collisions and returns pairs and times
       SUBROUTINE findcollPrt(prt,id1,id2,lM)
-      CLASS(prtType), INTENT(IN), TARGET :: prt
+      CLASS(prtType), INTENT(INOUT), TARGET :: prt
       CLASS(mshType), INTENT(IN) :: lM
       INTEGER, INTENT(IN) :: id1, id2
       TYPE(pRawType), POINTER :: p1,p2
@@ -632,10 +632,9 @@
       p1%ti = tcr
       p2%ti = tcr
 
-      p1%collided = .true.
-      p2%collided = .true.
-
       prt%collcnt = prt%collcnt+1
+      prt%collpair(prt%collcnt,:) = (/id1,id2/)
+      prt%collt(prt%collcnt) = tcr
 
       END SUBROUTINE findcollPrt
 
@@ -656,6 +655,8 @@
       rho = prt%mat%rho()
       k   = prt%mat%krest()
       mp = pi*rho/6D0*dp**3D0
+      print *, id1,id2
+      print *, p1%remdt, p2%remdt
 
       ! Update location to collision location
       p1%x = p1%xc
@@ -697,10 +698,6 @@
 
       p1%remdt = p1%remdt-p1%ti
       p2%remdt = p2%remdt-p2%ti
-
-      p1%collided = .false.
-      p2%collided = .false.
-
 
       END SUBROUTINE collidePrt
 !--------------------------------------------------------------------
@@ -1145,7 +1142,11 @@
 !!!!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
       g(3)=-1D0
-      if (prt%ptr(idp) .eq. 2) g=-g
+      if (prt%ptr(idp) .eq. 2) g=-g !!!!!!!!!
+      if (prt%ptr(idp) .eq.3) then
+            g=0
+            g(2) = -1D0
+      end if
       tmpprt = prt
       msh => prt%dmn%msh(1)
       p  => prt%dat(idp)
@@ -1244,7 +1245,8 @@
       SUBROUTINE solvePrt(eq)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT):: eq
-      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit
+      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit, citer
+      !INTEGER,ALLOCATABLE :: pck(:,:)
       TYPE(mshType), POINTER :: lM
 !     Particle/fluid Parameters
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
@@ -1274,11 +1276,11 @@
       subit = FLOOR(dt/dtp)
       dtp = dt/subit
       eq%dt = dtp
+      eq%collt = dtp+1
 
       DO l = 1,subit
 
       DO i=1,eq%n
-
 !     If it's the first iteration, update last velocity, position
             IF (eq%itr .EQ. 0) THEN
                   eq%dat(i)%xo = eq%dat(i)%x
@@ -1292,24 +1294,41 @@
 !     Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
       ENDDO
-
+      
+!     Collisions
       DO i = 1,eq%n
-      !     Collisions
             DO j=1,eq%n
-!     Check if the particle collides with any other particles and hasn't collided. Advance to collision location
-            IF ((i.ne.j).and.(.not.(eq%dat(i)%collided))) THEN
-                  CALL eq%findcoll(i,j,lM)
-                  IF (eq%dat(i)%collided) CALL eq%collide(i,j)
-            END IF
+!     Check if the particle collides with any other particles during step. Then add to list if so
+                  IF (i.lt.j) THEN
+                        CALL eq%findcoll(i,j,lM)
+                  END IF
+            ENDDO
+      ENDDO
+
+!     Keep looping over collisions, adding more as they appear, until there aren't any left
+      DO WHILE(MINVAL(eq%collt).le.dtp)
+!     Enact collisions, starting with shortest time to collision, check for more collisions, add any you find in
+            citer = MINLOC(eq%collt, 1)
+            CALL eq%collide(eq%collpair(citer,1),eq%collpair(citer,2))
+            eq%collt(citer) = dtp + 1
+!     Get rid of any previous collisions with these particles
+            eq%collt(PACK(eq%collpair
+     2 , eq%collpair .eq. eq%collpair(citer,1))) = dtp + 1
+            eq%collt(PACK(eq%collpair
+     2 , eq%collpair .eq. eq%collpair(citer,2))) = dtp + 1
+            DO i = 1,eq%n
+                  IF(i.ne.eq%collpair(citer,1))
+     2 CALL eq%findcoll(eq%collpair(citer,1),i,lM)
+
+                  IF(i.ne.eq%collpair(citer,2))
+     2 CALL eq%findcoll(eq%collpair(citer,2),i,lM)
             ENDDO
       ENDDO
 
       DO i = 1,eq%n
             CALL eq%adv(i)
             IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
-     2            eq%dat(i)%u(3) ,taup    
-!           Reset if particles have collided
-            eq%dat(i)%collided = .false.
+     2            eq%dat(i)%u(3) ,eq%dat(i)%x(2)
       END DO
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
@@ -1329,6 +1348,9 @@
       
 !     Checking for exceptions
       CALL io%w%checkException()
+
+!     Deallocate collision list
+!      DEALLOCATE(eq%collpair,eq%collt) !!
 
       RETURN
       END SUBROUTINE solvePrt

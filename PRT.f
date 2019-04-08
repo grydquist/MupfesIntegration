@@ -255,7 +255,7 @@
       eq%var(1) = gVarType(nsd,'PVelocity',eq%dmn)
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
-!     Assuming everything is in first mesh for searchboxes !!!!!!
+!     Assuming everything is in first mesh for searchboxes !!
       CALL eq%sb%new(eq%dmn%msh(1))
 !     Getting volumes of influence for each node
       DO i = 1,eq%dmn%msh(1)%nEl
@@ -505,11 +505,9 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0.001D0
-           p%x(3) = 0.31D0/ip
+           p%x(3) = 150D0/ip
            prt%dat(ip) = p
       END DO
-      prt%dat(3)%x(3) = 0.2326D0
-      prt%dat(3)%x(2) = 0.1D0
 
       RETURN
       END SUBROUTINE seedPrt
@@ -549,7 +547,6 @@
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
          end do
       end do
-      fvel = 0
 
       ! Relative velocity
       relvel = fvel - p%u
@@ -558,7 +555,7 @@
       ! Reynolds Number
       Rep = dp*magud*rhoF/mu
       ! Schiller-Neumann (finite Re) correction
-      fSN = 1D0 !+ 0.15D0*Rep**0.687D0   !!!
+      fSN = 1D0 !+ 0.15D0*Rep**0.687D0   !!
       ! Stokes corrected drag force
       apD = fSN/taup*relvel
 
@@ -655,8 +652,6 @@
       rho = prt%mat%rho()
       k   = prt%mat%krest()
       mp = pi*rho/6D0*dp**3D0
-      print *, id1,id2
-      print *, p1%remdt, p2%remdt
 
       ! Update location to collision location
       p1%x = p1%xc
@@ -1139,14 +1134,10 @@
       INTEGER :: a, Ac
 
 !     Gravity
-!!!!! Find where grav actually is? (maybe mat%body forces)
+!! Find where grav actually is? (maybe mat%body forces)
       g=0D0
       g(3)=-1D0
-      if (prt%ptr(idp) .eq. 2) g=-g !!!!!!!!!
-      if (prt%ptr(idp) .eq.3) then
-            g=0
-            g(2) = -1D0
-      end if
+
       tmpprt = prt
       msh => prt%dmn%msh(1)
       p  => prt%dat(idp)
@@ -1183,7 +1174,7 @@
       tp%x  = prtxpred
 
 !     Find which searchbox prediction is in
-      tp%sbID = sb%id(tp%x)   !!!!!!!!!!!!! For some reason this changes apT???? Does not make any sense to me at all
+      tp%sbID = sb%id(tp%x)   !! For some reason this changes apT???? Does not make any sense to me at all
 
 !     Get shape functions/element of prediction
       Ntmp = tmpprt%shapeF(1, msh)
@@ -1196,7 +1187,7 @@
             p%wall = .TRUE.
             RETURN
       END IF
-!     Total acceleration (just drag and buoyancy now) ! again, because above changes this for some reason
+!     Total acceleration (just drag and buoyancy now) ! again, because above changes this for some reason !!
       apT = apd + g*(1D0 - rhoF/rhoP)
 
 !     Get drag acceleration of predicted particle
@@ -1212,8 +1203,6 @@
 !            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
 !     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
-
-      IF (time.lt.0.04) prt%twc%v(1,1) = 1D0
 
       IF (prt%itr .EQ. 0) THEN
             tmpwr = 0.5*(apd+apdpred)
@@ -1259,6 +1248,7 @@
 
 !     Reset twc force to zero
       eq%twc%v(:,:) = 0D0
+      eq%twc%v(3,1952) = 1D0
 
 !     Reset collision counter
       eq%collcnt = 0
@@ -1266,9 +1256,9 @@
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
 
-!!!!! get time step broken down to be dictated by either fastest velocity(in terms of eq%sb's traveled), relax time, overall solver dt
-!!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
-!!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it eq%sb so I can only check neighboring eq%sb's
+!! get time step broken down to be dictated by either fastest velocity(in terms of eq%sb's traveled), relax time, overall solver dt
+!! idea: do one more loop through all partsicles above this one and get time step for each one, then take minimum
+!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it eq%sb so I can only check neighboring eq%sb's
 
 !     Appropriate time step
       dtp = MIN(taup,dt)
@@ -1328,7 +1318,7 @@
       DO i = 1,eq%n
             CALL eq%adv(i)
             IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
-     2            eq%dat(i)%u(3) ,eq%dat(i)%x(2)
+     2            eq%dat(i)%u(3)
       END DO
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
@@ -1349,16 +1339,12 @@
 !     Checking for exceptions
       CALL io%w%checkException()
 
-!     Deallocate collision list
-!      DEALLOCATE(eq%collpair,eq%collt) !!
-
       RETURN
       END SUBROUTINE solvePrt
       
       END MODULE PRTMOD
 
 
-      !!!! Urgent fixes after wall:
-      !!!! Add in so it only checks in same searchbox
-      !!!! Mult collisions per step
-      !!! Right now doesn't consider collisions after other collisions (wall or particle)
+      !! Urgent fixes:
+      !! Add in so it only checks in same searchbox
+      !! Combine wall into collisions matrix

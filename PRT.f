@@ -503,9 +503,12 @@
            CALL RANDOM_NUMBER(p%x(:))
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
-           p%x(1) = 0D0
-           p%x(2) = 0.001D0
-           p%x(3) = 150D0/ip
+           !p%x(1) = 0D0
+           !p%x(2) = 0.001D0
+           !p%x(3) = 250D0/ip
+           p%x(1) = (p%x(1)-0.5D0)*40D0/sqrt(2D0)
+           p%x(2) = (p%x(2)-0.5D0)*40D0/sqrt(2D0)
+           p%x(3) = p%x(3)*300D0
            prt%dat(ip) = p
       END DO
 
@@ -1024,8 +1027,8 @@
 !     Send drag to fluid
       DO jj=1,msh%eNoN
             Ac = prt%dmn%msh(1)%IEN(jj,p%eID)
-            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
-     2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
+!            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+!     2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
 
 !     Advance to collision location
@@ -1206,7 +1209,7 @@
 
       IF (prt%itr .EQ. 0) THEN
             tmpwr = 0.5*(apd+apdpred)
-            write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
+            !write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
             !print *, sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
             !mom =prt%dmn%msh(1)%integ(u%v, 3)
             !print *, mom
@@ -1248,7 +1251,7 @@
 
 !     Reset twc force to zero
       eq%twc%v(:,:) = 0D0
-      eq%twc%v(3,1952) = 1D0
+      eq%twc%v(3,eq%dmn%msh(1)%IEN(1,1949)) = 0.0001D0
 
 !     Reset collision counter
       eq%collcnt = 0
@@ -1317,20 +1320,25 @@
 
       DO i = 1,eq%n
             CALL eq%adv(i)
-            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
+            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x,
      2            eq%dat(i)%u(3)
+     3 , eq%Uns%v(3,eq%dmn%msh(1)%IEN(1,1949))
+     4 , eq%Uns%v(3,eq%dmn%msh(1)%IEN(8,1949))
       END DO
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
 
-      IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u(3), !eq%dat(2)%u
-     2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
-     3 time
-!     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
-!     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
-!     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
-     6  ,P1,P2
+      IF (eq%itr .EQ. 0) write(88,*) 
+     2 eq%Uns%v(3,eq%dmn%msh(1)%IEN(1,1949)),
+     3 eq%Uns%v(3,eq%dmn%msh(1)%IEN(2,1949)), 
+     4 eq%Uns%v(3,eq%dmn%msh(1)%IEN(3,1949)),
+     5 eq%Uns%v(3,eq%dmn%msh(1)%IEN(4,1949)),
+     6 eq%Uns%v(3,eq%dmn%msh(1)%IEN(5,1949)),
+     7 eq%Uns%v(3,eq%dmn%msh(1)%IEN(6,1949)),
+     8 eq%Uns%v(3,eq%dmn%msh(1)%IEN(7,1949)),
+     9 eq%Uns%v(3,eq%dmn%msh(1)%IEN(8,1949))
+
       ENDDO
 
 !     Updating norm for solution control

@@ -32,6 +32,10 @@
             INTEGER, ALLOCATABLE :: els(:)
 !     Face elements in searchbox (face and element)
             TYPE(facelsType), ALLOCATABLE :: fa(:)
+!     Total particles in box
+            INTEGER :: nprt = 0
+!     IDs of particles in box
+            INTEGER, ALLOCATABLE :: c(:)
       END TYPE
 
 !     Search box collection type
@@ -85,6 +89,8 @@
          REAL(KIND=8) :: ti
 !     Did particle hit a wall?
          LOGICAL :: wall = .TRUE.
+!     Other particles this particle has collided with
+         LOGICAL, ALLOCATABLE :: OthColl(:)
       END TYPE pRawType
 
 !     Collection of particles
@@ -283,7 +289,7 @@
 
  !!     ! Will need to replace eventually with something that targets element size
 
-      split=(/3,3,3/)
+      split=(/5,5,5/)
       sb%n=split
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
@@ -363,6 +369,7 @@
 !     Populate boxes with elements
       do ii = 1,sb%n(1)*sb%n(2)*sb%n(3)
          ALLOCATE(sb%box(ii)%fa(msh%nFa))
+         ALLOCATE(sb%box(ii)%c(1))
          cnt2 = 1
          sbel = 0
          outer: do jj = 1,msh%Nel
@@ -505,7 +512,9 @@
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
            p%x(2) = 0.001D0
-           p%x(3) = 150D0/ip
+           p%x(3) = 1.05D0/ip
+           if (ip.eq.3) p%x(3) = .79D0
+           if (ip.eq.3) p%x(2) = .1D0
            prt%dat(ip) = p
       END DO
 
@@ -575,6 +584,9 @@
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
       dp  = prt%mat%D()
+
+      p1%OthColl(id2) = .true.
+      p2%OthColl(id1) = .true.
 
 !     First, check if particles will collide at current trajectory
       a = p1%x(1) - p2%x(1)
@@ -1120,6 +1132,7 @@
       SUBROUTINE advPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
+      INTEGER, ALLOCATABLE :: tmpstck(:)
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       TYPE(pRawType), POINTER :: p, tp
@@ -1131,12 +1144,17 @@
      3   rhoP, N(nsd+1), Ntmp(nsd+1), tt(4)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom
-      INTEGER :: a, Ac
+      INTEGER :: a, Ac, i
 
 !     Gravity
 !! Find where grav actually is? (maybe mat%body forces)
       g=0D0
       g(3)=-1D0
+      if (idp.eq.2) g(3)=1D0
+      if (idp.eq.3) then
+             g(3)=0
+             g(2)=-1D0
+      END IF
 
       tmpprt = prt
       msh => prt%dmn%msh(1)
@@ -1151,16 +1169,6 @@
       dp    = prt%mat%D()
       mp = pi*rhoP/6D0*dp**3D0
 
-      p%eIDo = p%eID
-      p%sbIDo= p%sbID
-
-
-      IF (p%wall) THEN
-!           Find which searchbox particle is in
-            p%sbID = sb%id(p%x)
-!           Get shape functions/element of particle
-            N = prt%shapeF(idp, msh)
-      END IF
 
 !     Get drag acceleration
       apd = prt%drag(idp)
@@ -1224,6 +1232,26 @@
             p%x = p%x + p%remdt*p%u
             p%wall = .TRUE.
             RETURN
+      ELSE
+!           Add this to the number of particles in the box
+      DO i = 1,2**nsd
+            IF ((p%sbID(i).lt. sb%n(1)*sb%n(2)*sb%n(3))
+     2      .and. (p%sbID(i).gt.0)) then
+                  sb%box(p%sbID(i))%nprt = 
+     2            sb%box(p%sbID(i))%nprt + 1
+                  tmpstck = sb%box(p%sbID(i))%c
+                  DEALLOCATE(sb%box(p%sbID(i))%c)
+                  ALLOCATE(sb%box(p%sbID(i))%c(sb%box(p%sbID(i))%nprt))
+                  IF (sb%box(p%sbID(i))%nprt.ne.1) THEN
+                  sb%box(p%sbID(i))%c(1:sb%box(p%sbID(i))%nprt-1)
+     2            =tmpstck
+                  sb%box(p%sbID(i))%c(sb%box(p%sbID(i))%nprt) = idp
+                  ELSE
+                        sb%box(p%sbID(i))%c(1) = idp
+                  END IF 
+
+            END IF
+      ENDDO
       END IF
 
       p%wall = .FALSE.
@@ -1234,12 +1262,11 @@
       SUBROUTINE solvePrt(eq)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT):: eq
-      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit, citer
-      !INTEGER,ALLOCATABLE :: pck(:,:)
+      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit, citer, i2
       TYPE(mshType), POINTER :: lM
-!     Particle/fluid Parameters
+      INTEGER, ALLOCATABLE :: tmpstck(:)
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
-     2 P1, P2
+     2 P1, P2, N(nsd+1)
 
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
@@ -1263,7 +1290,7 @@
 !     Appropriate time step
       dtp = MIN(taup,dt)
 !     Subiterations
-      subit = FLOOR(dt/dtp)
+      subit = 1!FLOOR(dt/dtp)
       dtp = dt/subit
       eq%dt = dtp
       eq%collt = dtp+1
@@ -1283,15 +1310,73 @@
 
 !     Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
+
+!     Reset other collisions
+            IF(.not.ALLOCATED(eq%dat(i)%OthColl))
+     2       ALLOCATE(eq%dat(i)%OthColl(eq%n))
+            eq%dat(i)%OthColl = .false.
+
+!     Find searchbox of all the particles
+
+      eq%dat(i)%eIDo = eq%dat(i)%eID
+      eq%dat(i)%sbIDo= eq%dat(i)%sbID
+
+      IF (eq%dat(i)%wall) THEN
+!           Find which searchbox particle is in
+            eq%dat(i)%sbID = eq%sb%id(eq%dat(i)%x)
+!           Add this to the number of particles in the box
+            DO j = 1,2**nsd
+
+            IF ((eq%dat(i)%sbID(j).lt. eq%sb%n(1)*eq%sb%n(2)*eq%sb%n(3))
+     2      .and. (eq%dat(i)%sbID(j).gt.0)) then
+!     Increase number in box
+                  eq%sb%box(eq%dat(i)%sbID(j))%nprt = 
+     2            eq%sb%box(eq%dat(i)%sbID(j))%nprt + 1
+!     Temporarily hold old searchbox values
+                  tmpstck = eq%sb%box(eq%dat(i)%sbID(j))%c
+                  DEALLOCATE(eq%sb%box(eq%dat(i)%sbID(j))%c)
+!     Increase size of container by 1
+                  ALLOCATE(eq%sb%box(eq%dat(i)%sbID(j))%
+     2             c(eq%sb%box(eq%dat(i)%sbID(j))%nprt))
+!     Add to end (a little different if it's the first element)
+                  IF (eq%sb%box(eq%dat(i)%sbID(j))%nprt.ne.1) THEN
+                  eq%sb%box(eq%dat(i)%sbID(j))%c
+     2       (1:eq%sb%box(eq%dat(i)%sbID(j))%nprt-1)=tmpstck
+                  eq%sb%box(eq%dat(i)%sbID(j))%c
+     2             (eq%sb%box(eq%dat(i)%sbID(j))%nprt) = i
+                  ELSE
+                        eq%sb%box(eq%dat(i)%sbID(j))%c(1) = i
+                  END IF 
+
+            END IF
+            ENDDO
+!           Get shape functions/element of particle
+            N = eq%shapeF(i, lM)
+      END IF
+
       ENDDO
-      
+
 !     Collisions
+
+!      DO i=1,eq%n
+!            DO j=1,eq%n
+!                  IF (i.lt.j)
+!     2                  CALL eq%findcoll(i,j,lM)
+!            END DO
+!      END DO 
+
       DO i = 1,eq%n
-            DO j=1,eq%n
+            DO j=1,2**nsd
+            IF ((eq%dat(i)%sbID(j).gt.0).and.
+     2  (eq%dat(i)%sbID(j).lt.eq%sb%n(1)*eq%sb%n(2)*eq%sb%n(3))) THEN
+                  DO k=1,eq%sb%box(eq%dat(i)%sbID(j))%nprt
+                        i2 = eq%sb%box(eq%dat(i)%sbID(j))%c(k)        
 !     Check if the particle collides with any other particles during step. Then add to list if so
-                  IF (i.lt.j) THEN
-                        CALL eq%findcoll(i,j,lM)
-                  END IF
+               IF ((i.lt.i2) .and. .not.(eq%dat(i)%OthColl(i2))) THEN
+                        CALL eq%findcoll(i,i2,lM)
+               END IF
+                  ENDDO
+            END IF
             ENDDO
       ENDDO
 
@@ -1314,6 +1399,13 @@
      2 CALL eq%findcoll(eq%collpair(citer,2),i,lM)
             ENDDO
       ENDDO
+
+      !     Reset SB's
+      DO i = 1,eq%sb%n(1)*eq%sb%n(2)*eq%sb%n(3)
+            eq%sb%box(i)%nprt = 0
+            DEALLOCATE(eq%sb%box(i)%c)
+            ALLOCATE(eq%sb%box(i)%c(1))
+      END DO
 
       DO i = 1,eq%n
             CALL eq%adv(i)
@@ -1346,5 +1438,5 @@
 
 
       !! Urgent fixes:
-      !! Add in so it only checks in same searchbox
       !! Combine wall into collisions matrix
+      !! Collisions check multiple repeats, still checks every one for mult collisions

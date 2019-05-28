@@ -1,4 +1,11 @@
 fclose all;
+rhop = 100;
+D = 0.1;
+mu = 0.1;
+rhof = 1.2;
+g = 1;
+taup = 1/18*rhop*D^2/mu;
+vt = (1-rhof/rhop)*taup*g;
 fileid=fopen('../pos.txt');
 cell=fscanf(fileid,'%f');
 x1=cell(1:6:end);
@@ -48,7 +55,11 @@ coeffs = polyfit(t,z1,2);
 xtemp = coeffs(1)*t.^2 + coeffs(2)*t+coeffs(3);
 plot(t,xtemp,t,z1)
 %plot((z1(2:end)-z1(1:end-1))/-0.01);hold on; plot(x1(2:end))
-plot((z1(2:end)*0.1/1.2-z1(1:end-1)*0.1/1.2)/-0.01+z2(2:end)-y2(1:end-1),'k');hold on; plot(x1)
+plot((z1(2:end)-z1(1:end-1))/-0.01+z2(2:end)-y2(1:end-1),'k');hold on; plot(x1)
+
+%plot((z1(2:end)*0.1/1.2-z1(1:end-1)*0.1/1.2)/-0.01+z2(2:end)-y2(1:end-1),'k');hold on; plot(x1)
+
+
 %plot(((z1(2:end)-z1(1:end-1))/-0.01+z2(2:end)-y2(1:end-1))./x1(2:end),'k');
 
 %g = fittype('a-b*exp(-c*x)');

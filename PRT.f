@@ -48,6 +48,8 @@
          REAL(KIND=8) :: step(3)
 !     Individual boxes
          TYPE(boxtype), ALLOCATABLE :: box(:)
+!     Max and min sb values
+         REAL(KIND=8) :: minx(3), maxx(3)
       CONTAINS
 !     Sets up the search boxes pertaining to msh
          PROCEDURE :: new => newSb
@@ -280,17 +282,18 @@
       CLASS(mshType), INTENT(IN) :: msh
       CLASS(sbType), INTENT(INOUT):: sb
       TYPE(facelsboxType), ALLOCATABLE :: facels(:)
-      INTEGER :: ii,jj,cnt2,kk,ll
+      TYPE(boxType) :: tmpbox
+      INTEGER :: ii,jj,cnt2,kk,ll, iSb(2**nsd),xsteps(2**nsd)
+     2  
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
-      REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl), eps(nsd)
-      INTEGER, ALLOCATABLE :: sbel(:),sbelf(:)
-      INTEGER :: split(nsd)
+      REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl), eps(nsd),
+     2 elbx(2**nsd),elvert(nsd,2**nsd),xzero(nsd)
+      INTEGER, ALLOCATABLE :: sbel(:),sbelf(:),totSB(:)
       IF (sb%crtd) RETURN
 
  !!     ! Will need to replace eventually with something that targets element size
 
-      split=(/5,5,5/)
-      sb%n=split
+      sb%n=(/10,10,10/)
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
       ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
@@ -344,6 +347,229 @@
       sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
       sb%box%dim(4) = sb%box%dim(3) + sb%step(2)
       sb%box%dim(6) = sb%box%dim(5) + sb%step(3)
+      sb%minx(1) = minval(sb%box(:)%dim(1))
+      sb%minx(2) = minval(sb%box(:)%dim(3))
+      sb%minx(3) = minval(sb%box(:)%dim(5))
+      
+
+      ! Making boxes surrounding elements and finding the sbs the box vertices are in
+      DO ii=1,msh%Nel
+         DO jj=1,nsd
+            elbx(2*jj-1) = MINVAL(msh%x(jj,msh%IEN(:,ii)))
+            elbx(2*jj  ) = MAXVAL(msh%x(jj,msh%IEN(:,ii)))
+         ENDDO
+         elvert(1,1) = elbx(1)
+         elvert(2,1) = elbx(3)
+
+         elvert(1,2) = elbx(2)
+         elvert(2,2) = elbx(3)
+
+         elvert(1,3) = elbx(2)
+         elvert(2,3) = elbx(4)
+
+         elvert(1,4) = elbx(1)
+         elvert(2,4) = elbx(4)
+
+         IF (nsd.eq.3) THEN
+         
+         elvert(3,1) = elbx(5)
+         elvert(3,2) = elbx(5)
+         elvert(3,3) = elbx(5)
+         elvert(3,4) = elbx(5)
+
+         elvert(1,5) = elbx(1)
+         elvert(2,5) = elbx(3)
+         elvert(3,5) = elbx(6)
+
+         elvert(1,6) = elbx(2)
+         elvert(2,6) = elbx(3)
+         elvert(3,6) = elbx(6)
+
+         elvert(1,7) = elbx(2)
+         elvert(2,7) = elbx(4)
+         elvert(3,7) = elbx(6)
+
+         elvert(1,8) = elbx(1)
+         elvert(2,8) = elbx(4)
+         elvert(3,8) = elbx(6)
+
+         END IF
+
+!        Just doing subroutine idsb, but I haven't made the searchboxes yet so I can't call it
+         DO jj = 1,2**nsd
+            ! Set domain back to zero
+            xzero(1) = elvert(1,jj) - sb%minx(1)
+            xzero(2) = elvert(2,jj) - sb%minx(2)
+            xzero(3) = elvert(3,jj) - sb%minx(3)
+
+            ! Find which searchbox the particle is in
+            ! Number of searchbox steps in x,y,and z
+            xsteps = FLOOR(2*xzero/sb%step)
+
+            ! furthest searchbox in front
+            iSb(1) = xsteps(1) + sb%n(1)*xsteps(2) +
+     2     sb%n(1)*sb%n(2)*xsteps(3) + 1
+            ! previous sb in x
+            iSb(2) = iSb(1) - 1
+            ! previous sb's in y
+            iSb(3) = iSb(1) - sb%n(1)
+            iSb(4) = iSb(3) - 1
+            ! Next sb's in z (if available)
+
+            if (nsd.eq.3) then
+            iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
+            iSb(6) = iSb(5) - 1
+            iSb(7) = iSb(5) - sb%n(1)
+            iSb(8) = iSb(7) - 1
+            end if
+
+            addloop: DO kk=1,2**nsd
+!           Add element to sb (if sb exists)
+                  IF ((iSb(kk).gt.0)
+     2    .and.(iSb(kk).le.sb%n(1)*sb%n(2)*sb%n(3))) THEN
+
+!           If this isn't the first element going in the box
+                  IF (ALLOCATED(sb%box(iSb(kk))%els))THEN
+!           First check if the element has been added already
+                        IF (ANY(sb%box(iSb(kk))%els.eq.ii))
+     2                  cycle addloop   
+
+                        ALLOCATE(tmpbox%els(
+     2            size(sb%box(iSb(kk))%els)+1))
+                        tmpbox%els(1:size(sb%box(iSb(kk))%els))
+     2            = sb%box(iSb(kk))%els
+                        DEALLOCATE(sb%box(iSb(kk))%els)
+                        ALLOCATE(sb%box(iSb(kk))%els(
+     2            size(tmpbox%els)))
+                        sb%box(iSb(kk))%els = tmpbox%els
+                        sb%box(iSb(kk))%els(size(tmpbox%els)) =
+     2            ii
+                        DEALLOCATE(tmpbox%els)
+!           If this is the first element in the box
+                  ELSE
+                        ALLOCATE(sb%box(iSb(kk))%els(1))
+                        sb%box(iSb(kk))%els(1) = ii
+                  END IF
+                  END IF
+            ENDDO addloop
+         END DO
+      ENDDO
+
+!     Same process as above, but got faces
+      do ii = 1,msh%nFa
+            ALLOCATE(facels(ii)%elbox(2*nsd,msh%fa(ii)%nEl))
+            do jj = 1,msh%fa(ii)%nEl
+                  do kk = 1,nsd
+                        elbx(2*kk-1) = 
+     2            MINVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
+                        elbx(2*kk  ) =
+     2            MAXVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
+                  end do
+
+                  elvert(1,1) = elbx(1)
+                  elvert(2,1) = elbx(3)
+         
+                  elvert(1,2) = elbx(2)
+                  elvert(2,2) = elbx(3)
+         
+                  elvert(1,3) = elbx(2)
+                  elvert(2,3) = elbx(4)
+         
+                  elvert(1,4) = elbx(1)
+                  elvert(2,4) = elbx(4)
+         
+                  IF (nsd.eq.3) THEN
+                  
+                  elvert(3,1) = elbx(5)
+                  elvert(3,2) = elbx(5)
+                  elvert(3,3) = elbx(5)
+                  elvert(3,4) = elbx(5)
+         
+                  elvert(1,5) = elbx(1)
+                  elvert(2,5) = elbx(3)
+                  elvert(3,5) = elbx(6)
+         
+                  elvert(1,6) = elbx(2)
+                  elvert(2,6) = elbx(3)
+                  elvert(3,6) = elbx(6)
+         
+                  elvert(1,7) = elbx(2)
+                  elvert(2,7) = elbx(4)
+                  elvert(3,7) = elbx(6)
+         
+                  elvert(1,8) = elbx(1)
+                  elvert(2,8) = elbx(4)
+                  elvert(3,8) = elbx(6)
+                  END IF
+                  
+!        Just doing subroutine idsb, but I haven't made the searchboxes yet so I can't call it
+         DO kk = 1,2**nsd
+            ! Set domain back to zero
+            xzero(1) = elvert(1,kk) - sb%minx(1)
+            xzero(2) = elvert(2,kk) - sb%minx(2)
+            xzero(3) = elvert(3,kk) - sb%minx(3)
+
+            ! Find which searchbox the particle is in
+            ! Number of searchbox steps in x,y,and z
+            xsteps = FLOOR(2*xzero/sb%step)
+
+            ! furthest searchbox in front
+            iSb(1) = xsteps(1) + sb%n(1)*xsteps(2) +
+     2     sb%n(1)*sb%n(2)*xsteps(3) + 1
+            ! previous sb in x
+            iSb(2) = iSb(1) - 1
+            ! previous sb's in y
+            iSb(3) = iSb(1) - sb%n(1)
+            iSb(4) = iSb(3) - 1
+            ! Next sb's in z (if available)
+
+            if (nsd.eq.3) then
+            iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
+            iSb(6) = iSb(5) - 1
+            iSb(7) = iSb(5) - sb%n(1)
+            iSb(8) = iSb(7) - 1
+            end if
+
+            addloop2: DO ll=1,2**nsd
+!           Add element to sb (if sb exists/element hasn't been added)
+                  IF ((iSb(ll).gt.0)
+     2    .and.(iSb(ll).le.sb%n(1)*sb%n(2)*sb%n(3))) THEN
+!           First we need to allocate the face structure of the sb...
+                        IF(.not.ALLOCATED(sb%box(iSb(ll))%fa))
+     2                  ALLOCATE(sb%box(iSb(ll))%fa(msh%nFa))             
+
+!           If this isn't the first element going in the box
+                  IF (ALLOCATED(sb%box(iSb(ll))%fa(ii)%els))THEN
+!           First check if the element has been added already
+                        IF (ANY(sb%box(iSb(ll))%fa(ii)%els.eq.jj))
+     2                  cycle addloop2
+
+                        ALLOCATE(tmpbox%els(
+     2            size(sb%box(iSb(ll))%fa(ii)%els)+1))
+                        tmpbox%els(1:size(sb%box(iSb(ll))%fa(ii)%els))
+     2            = sb%box(iSb(ll))%fa(ii)%els
+                        DEALLOCATE(sb%box(iSb(ll))%fa(ii)%els)
+                        ALLOCATE(sb%box(iSb(ll))%fa(ii)%els(
+     2            size(tmpbox%els)))
+                        sb%box(iSb(ll))%fa(ii)%els = tmpbox%els
+                        sb%box(iSb(ll))%fa(ii)%els(size(tmpbox%els)) =
+     2            jj
+                        DEALLOCATE(tmpbox%els)
+!           If this is the first element in the box
+                  ELSE
+                        ALLOCATE(sb%box(iSb(ll))%fa(ii)%els(1))
+                        sb%box(iSb(ll))%fa(ii)%els = jj
+                  END IF
+                  END IF
+            ENDDO addloop2
+         END DO
+         
+
+            end do
+      end do
+
+      GOTO 190 !! Stupid comment hack
+      !! get rid of variables below and facelsboxtpe
 
       ! Making boxes surrounding elements
       do ii=1,msh%Nel
@@ -355,7 +581,6 @@
 
 !     Make boxes around FACE elements
       do ii = 1,msh%nFa
-            ALLOCATE(facels(ii)%elbox(2*nsd,msh%fa(ii)%nEl))
             do jj = 1,msh%fa(ii)%nEl
                   do kk = 1,nsd
                         facels(ii)%elbox(2*kk-1,jj) = 
@@ -365,6 +590,7 @@
                   end do
             end do
       end do
+
 
 !     Populate boxes with elements
       do ii = 1,sb%n(1)*sb%n(2)*sb%n(3)
@@ -416,6 +642,9 @@
             sb%box(ii)%fa(jj)%els = sbelf(1:cnt2-1)
          enddo outer2
       end do
+
+  190 continue
+
       sb%crtd = .TRUE.
 
       RETURN
@@ -431,9 +660,9 @@
       INTEGER :: xsteps(nsd)
 
       ! Set domain back to zero
-      xzero(1) = x(1) - minval(sb%box(:)%dim(1))
-      xzero(2) = x(2) - minval(sb%box(:)%dim(3))
-      xzero(3) = x(3) - minval(sb%box(:)%dim(5))
+      xzero(1) = x(1) - sb%minx(1)
+      xzero(2) = x(2) - sb%minx(2)
+      xzero(3) = x(3) - sb%minx(3)
 
       ! Find which searchbox the particle is in
       ! Number of searchbox steps in x,y,and z
@@ -470,6 +699,7 @@
 
       p => prt%dat(ip)
       b => prt%sb%box(MINVAL(p%sbID, MASK = p%sbID.gt.0))
+      N= -1D0
 
       do ii=1,size(b%els)+1
             
@@ -490,7 +720,7 @@
       end do
 
       ! If it loops through everything and doesn't yield a positive shape function,
-      ! the particle is outside the domain
+      ! the particle is outside the domain.
 
       RETURN
       END FUNCTION shapeFPrt
@@ -511,10 +741,8 @@
            IF (nsd .EQ. 2) p%x(3) = 0D0
            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
            p%x(1) = 0D0
-           p%x(2) = 0.001D0
-           p%x(3) = 1.05D0/ip
-           if (ip.eq.3) p%x(3) = .79D0
-           if (ip.eq.3) p%x(2) = .1D0
+           p%x(2) = 0D0
+           p%x(3) = 150D0/ip
            prt%dat(ip) = p
       END DO
 
@@ -526,7 +754,6 @@
       FUNCTION dragPrt(prt, ip) RESULT(apd)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER,INTENT(IN) :: ip
-      REAL(KIND=8) :: taupo      
       TYPE(VarType),POINTER :: u
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
@@ -551,6 +778,10 @@
 
 !     Interpolate velocity at particle point
       fvel=0D0
+
+!!    Again, here it is saying N isn't allocated and I don't know why...
+      IF(.not. ALLOCATED(p%N))
+     2 ALLOCATE(p%N(msh%eNoN)) 
       do ii=1,nsd
          do jj=1,msh%eNoN
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
@@ -1072,7 +1303,7 @@
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
             rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
-            p%x = (/0D0,0D0,29.5D0/)!msh%x(:,msh%fa(ii)%IEN(1,rndi))
+            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi)) 
 
             EXIT faloop
             END IF
@@ -1141,28 +1372,24 @@
       TYPE(VarType),POINTER :: u
       REAL(KIND=8) rhoF,
      2   mu, mp, g(nsd), dp,
-     3   rhoP, N(nsd+1), Ntmp(nsd+1), tt(4)
+     3   rhoP, Ntmp(nsd+1), tt(4)
+      REAL(KIND=8), ALLOCATABLE :: N(:)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
       REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom
-      INTEGER :: a, Ac, i
+      INTEGER :: a, Ac, i, tsbID(2**nsd), teID
 
 !     Gravity
 !! Find where grav actually is? (maybe mat%body forces)
       g=0D0
-      g(3)=-1D0
-      if (idp.eq.2) g(3)=1D0
-      if (idp.eq.3) then
-             g(3)=0
-             g(2)=-1D0
-      END IF
-
-      tmpprt = prt
+      g(3)=-1D0/idp
+      !tmpprt = prt                  !! Expensive with more sb
       msh => prt%dmn%msh(1)
+      ALLOCATE(N(msh%eNoN))
       p  => prt%dat(idp)
       sb => prt%sb
       tp => tmpprt%dat(1)
       u => prt%Uns
-      tmpprt%sb = sb
+      !tmpprt%sb = sb                !! Expensive with more sb
       rhoF  = prt%mns%rho()
       rhoP  = prt%mat%rho()
       mu    = prt%mns%mu()
@@ -1174,46 +1401,49 @@
       apd = prt%drag(idp)
 !     Total acceleration (just drag and buoyancy now)
       apT = apd + g*(1D0 - rhoF/rhoP)
-!     2nd order advance (Heun's Method)
-!     Predictor
-      pvelpred = p%u + p%remdt*apT
-      prtxpred = p%x + p%remdt*p%u
-      tp%u  = pvelpred
-      tp%x  = prtxpred
 
-!     Find which searchbox prediction is in
-      tp%sbID = sb%id(tp%x)   !! For some reason this changes apT???? Does not make any sense to me at all
+!!    For now, I'm just going to do 1st order. It eases a lot of optimization stuff
 
-!     Get shape functions/element of prediction
-      Ntmp = tmpprt%shapeF(1, msh)
-!     Check if predictor OOB
-      IF (ANY(Ntmp.le.-1D-7)) THEN
-!     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
-            CALL prt%findwl(idp,msh)
-            CALL prt%wall(idp,msh)
-            p%x = p%x + p%remdt*p%u
-            p%wall = .TRUE.
-            RETURN
-      END IF
-!     Total acceleration (just drag and buoyancy now) ! again, because above changes this for some reason !!
-      apT = apd + g*(1D0 - rhoF/rhoP)
-
-!     Get drag acceleration of predicted particle
-      apdpred = tmpprt%drag(1)
-      apTpred = apdpred + g*(1D0 - rhoF/rhoP)
-!     Corrector
-      p%u = p%u + 0.5D0*p%remdt*(apT+apTpred)
+!!     2nd order advance (Heun's Method)
+!!     Predictor
+!      pvelpred = p%u + p%remdt*apT
+!      prtxpred = p%x + p%remdt*p%u
+!      tp%u  = pvelpred
+!      tp%x  = prtxpred
+!
+!!     Find which searchbox prediction is in
+!      tp%sbID = sb%id(tp%x)   !! For some reason this changes apT???? Does not make any sense to me at all
+!!     Get shape functions/element of prediction
+!      Ntmp = tmpprt%shapeF(1, msh)
+!!     Check if predictor OOB
+!      IF (ANY(Ntmp.le.-1D-7)) THEN
+!!     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
+!            CALL prt%findwl(idp,msh)
+!            CALL prt%wall(idp,msh)
+!            p%x = p%x + p%remdt*p%u
+!            p%wall = .TRUE.
+!            RETURN
+!      END IF
+!!     Total acceleration (just drag and buoyancy now) ! again, because above changes this for some reason !!
+!      apT = apd + g*(1D0 - rhoF/rhoP)
+!
+!!     Get drag acceleration of predicted particle
+!      apdpred = tmpprt%drag(1)
+!      apTpred = apdpred + g*(1D0 - rhoF/rhoP)
+!!     Corrector
+      p%u = p%u + p%remdt*apT!0.5D0*p%remdt*(apT+apTpred)
       p%x = p%remdt*p%u + p%x
 
 !     Send drag to fluid
       DO a=1,msh%eNoN
             Ac = msh%IEN(a,p%eID)
-!            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+     2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
 !     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       END DO
 
       IF (prt%itr .EQ. 0) THEN
-            tmpwr = 0.5*(apd+apdpred)
+            tmpwr = apd
             write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
             !print *, sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
             !mom =prt%dmn%msh(1)%integ(u%v, 3)
@@ -1222,11 +1452,15 @@
       END IF
 
 !     Check if particle went out of bounds
+      tsbID = p%sbID
+      teID = p%eID
       p%sbID = sb%id(p%x)
       N = prt%shapeF(idp, msh)
 
       IF (ANY(N .le. -1D-7)) THEN
             p%x = p%xo
+            p%sbID = tsbID
+            p%eID = teID
             CALL prt%findwl(idp,msh)
             CALL prt%wall(idp,msh)
             p%x = p%x + p%remdt*p%u
@@ -1262,20 +1496,22 @@
       SUBROUTINE solvePrt(eq)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT):: eq
-      INTEGER ip, a, e, eNoN, Ac,i ,j, k,l, subit, citer, i2
+      INTEGER ip, a, e, eNoN, i ,j, k,l, subit, citer,i2,i1
       TYPE(mshType), POINTER :: lM
-      INTEGER, ALLOCATABLE :: tmpstck(:)
+      INTEGER, ALLOCATABLE :: tmpstck(:), N(:)
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
-     2 P1, P2, N(nsd+1)
+     2 P1, P2, rhoF
 
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
+      rhoF  = eq%mns%rho()
       mu    = eq%mns%mu()
       dp    = eq%mat%D()
+      ALLOCATE(N(lm%eNoN))
 
 !     Reset twc force to zero
       eq%twc%v(:,:) = 0D0
-      eq%twc%v(3,1952) = 1D0
+!      eq%twc%v(3,1952) = 1D0
 
 !     Reset collision counter
       eq%collcnt = 0
@@ -1332,6 +1568,10 @@
 !     Increase number in box
                   eq%sb%box(eq%dat(i)%sbID(j))%nprt = 
      2            eq%sb%box(eq%dat(i)%sbID(j))%nprt + 1
+
+            IF (.not. ALLOCATED(eq%sb%box(eq%dat(i)%sbID(j))%c))
+     2      ALLOCATE(eq%sb%box(eq%dat(i)%sbID(j))%c(1))       
+
 !     Temporarily hold old searchbox values
                   tmpstck = eq%sb%box(eq%dat(i)%sbID(j))%c
                   DEALLOCATE(eq%sb%box(eq%dat(i)%sbID(j))%c)
@@ -1356,7 +1596,7 @@
 
       ENDDO
 
-!     Collisions
+!     Collisions !! All particles
 
 !      DO i=1,eq%n
 !            DO j=1,eq%n
@@ -1384,26 +1624,34 @@
       DO WHILE(MINVAL(eq%collt).le.dtp)
 !     Enact collisions, starting with shortest time to collision, check for more collisions, add any you find in
             citer = MINLOC(eq%collt, 1)
-            CALL eq%collide(eq%collpair(citer,1),eq%collpair(citer,2))
+            i1 = eq%collpair(citer,1)
+            i2 = eq%collpair(citer,2)
+            CALL eq%collide(i1,i2)
             eq%collt(citer) = dtp + 1
 !     Get rid of any previous collisions with these particles
             eq%collt(PACK(eq%collpair
-     2 , eq%collpair .eq. eq%collpair(citer,1))) = dtp + 1
+     2 , eq%collpair .eq. i1)) = dtp + 1
             eq%collt(PACK(eq%collpair
-     2 , eq%collpair .eq. eq%collpair(citer,2))) = dtp + 1
-            DO i = 1,eq%n
-                  IF(i.ne.eq%collpair(citer,1))
-     2 CALL eq%findcoll(eq%collpair(citer,1),i,lM)
+     2 , eq%collpair .eq. i2)) = dtp + 1
+            eq%dat(i1)%OthColl = .false.
+            eq%dat(i2)%OthColl = .false.
+            DO i = 1,eq%n                 !! still loops over all other parts if collision occurs
+                                          !! to fix, remove these particles from sb, add to new ones
+                  IF((i.ne.i1).and.
+     2              .not.(eq%dat(i1)%OthColl(i)))
+     3 CALL eq%findcoll(i1,i,lM)
 
-                  IF(i.ne.eq%collpair(citer,2))
-     2 CALL eq%findcoll(eq%collpair(citer,2),i,lM)
+                  IF((i.ne.i2).and.
+     2              .not.(eq%dat(i2)%OthColl(i)))
+     3 CALL eq%findcoll(i2,i,lM)
             ENDDO
       ENDDO
 
-      !     Reset SB's
-      DO i = 1,eq%sb%n(1)*eq%sb%n(2)*eq%sb%n(3)
+!     Reset SB's particles
+      DO i = 1,eq%sb%n(1)*eq%sb%n(2)*eq%sb%n(3) !! Still have 1 single sb loop...
             eq%sb%box(i)%nprt = 0
-            DEALLOCATE(eq%sb%box(i)%c)
+            IF (ALLOCATED(eq%sb%box(i)%c))
+     2      DEALLOCATE(eq%sb%box(i)%c)
             ALLOCATE(eq%sb%box(i)%c(1))
       END DO
 
@@ -1417,7 +1665,7 @@
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
 
       IF (eq%itr .EQ. 0) write(88,*) eq%dat(1)%u(3), !eq%dat(2)%u
-     2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*1.2D0,
+     2 eq%dmn%msh(1)%integ(eq%Uns%v, 3)*rhoF,
      3 time
 !     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
 !     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
@@ -1439,4 +1687,4 @@
 
       !! Urgent fixes:
       !! Combine wall into collisions matrix
-      !! Collisions check multiple repeats, still checks every one for mult collisions
+      !! Collisions check the same particles multiple times, still checks every other particle  for multiple collisions

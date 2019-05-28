@@ -264,7 +264,7 @@
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
 !     Assuming everything is in first mesh for searchboxes !!
-      CALL eq%sb%new(eq%dmn%msh(1))
+      CALL eq%sb%new(eq%dmn%msh(1), eq%n)
 !     Getting volumes of influence for each node
       DO i = 1,eq%dmn%msh(1)%nEl
             volt = effvolel(eq%dmn%msh(1),i)
@@ -278,22 +278,75 @@
 
       END SUBROUTINE setupPrt
 !--------------------------------------------------------------------
-      SUBROUTINE newSb(sb,msh)
+      SUBROUTINE newSb(sb,msh,np)
       CLASS(mshType), INTENT(IN) :: msh
+      INTEGER, INTENT(IN) :: np
       CLASS(sbType), INTENT(INOUT):: sb
       TYPE(facelsboxType), ALLOCATABLE :: facels(:)
       TYPE(boxType) :: tmpbox
       INTEGER :: ii,jj,cnt2,kk,ll, iSb(2**nsd),xsteps(2**nsd)
-     2  
+     2  , n(nsd),a, s
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
       REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl), eps(nsd),
-     2 elbx(2**nsd),elvert(nsd,2**nsd),xzero(nsd)
+     2 elboxf(2**nsd),elvert(nsd,2**nsd),xzero(nsd), order(nsd,2)
+     3 , npr, maxel(nsd)
       INTEGER, ALLOCATABLE :: sbel(:),sbelf(:),totSB(:)
+      LOGICAL :: orderl(nsd)
+
       IF (sb%crtd) RETURN
 
- !!     ! Will need to replace eventually with something that targets element size
+!     We want the number of SBs to be approximately equal to the number of particles
 
-      sb%n=(/10,10,10/)
+!     Domain ranges
+      diff(1)=MAXVAL(msh%x(1,:))-MINVAL(msh%x(1,:))
+      diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
+      diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
+
+!     Ordering diff by index
+      order(1,1) = MINLOC(diff,1)
+      orderl = .true.
+      orderl(order(1,1)) = .false.
+      order(2,1) = MINLOC(diff,1, MASK = orderl)
+      orderl(order(2,1)) = .false.
+      order(3,1) = MINLOC(diff,1, MASK = orderl)
+      order(:,2) = diff(order(:,1))
+      order(:,2) = order(:,2)/order(1,2)
+
+!     Scaling to get approximately cubic SBs equal to approx number of particles
+      npr = np
+      s = (npr/(order(2,2)*order(3,2)))**(1D0/3D0)
+      
+!     First n estimate
+      n = s*order(:,2)
+!     Size of sb
+      sb%step = diff/((n + 1D0)/2D0)
+
+!     Now we check to make sure the dimensions of the SBs are bigger than the elements, so we don't miss an element
+!     We start by making boxes around the elements, which we will use later as well, and getting maxel size
+      
+      maxel = 0
+      DO ii=1,msh%Nel
+            DO jj=1,nsd
+               elbox(2*jj-1,ii) = MINVAL(msh%x(jj,msh%IEN(:,ii)))
+               elbox(2*jj  ,ii) = MAXVAL(msh%x(jj,msh%IEN(:,ii)))
+
+!              Updating max element size
+               IF((elbox(2*jj,ii)-elbox(2*jj-1,ii)).gt.maxel(jj))
+     2            maxel(jj) = elbox(2*jj,ii)-elbox(2*jj-1,ii)
+            ENDDO
+      ENDDO
+      
+!     If the elements are larger, set it so they're approximately the same size
+      DO ii =1,nsd
+            IF (maxel(ii).gt.sb%step(ii))
+     2       n(ii) = diff(ii)/maxel(ii)*2D0 - 1D0
+
+!     Due to my tolerancing/detection algorithm, n must be .ge. 2
+            n(ii) = MAX(n(ii),2)
+      ENDDO
+      
+!     Here's the final number of sb's in each direction!
+      sb%n = n
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
       ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
@@ -305,17 +358,12 @@
       ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
      2   ,seq3(sb%n(2)*sb%n(1)))
 
-      ! Domain ranges
-      diff(1)=MAXVAL(msh%x(1,:))-MINVAL(msh%x(1,:))
-      diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
-      diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
-
-      ! Size of sb
-      sb%step=(diff)/((sb%n+1D0)/2D0) 
+!     Size of sb
+      sb%step = diff/((sb%n + 1D0)/2D0) 
             
       ! Tolerance, based off max between searchbox size (for particle going out of bounds)
       ! and max size needed for id'ing algorithm in idSB
-      eps = MAXVAL((/2*diff/(sb%n-1),sb%step/))
+      eps = MAX(2*diff/(sb%n-1),sb%step)
       sb%step=(diff+eps)/((sb%n+1D0)/2D0) 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
@@ -352,46 +400,42 @@
       sb%minx(3) = minval(sb%box(:)%dim(5))
       
 
-      ! Making boxes surrounding elements and finding the sbs the box vertices are in
+      ! Finding the sbs the box vertices are in
       DO ii=1,msh%Nel
-         DO jj=1,nsd
-            elbx(2*jj-1) = MINVAL(msh%x(jj,msh%IEN(:,ii)))
-            elbx(2*jj  ) = MAXVAL(msh%x(jj,msh%IEN(:,ii)))
-         ENDDO
-         elvert(1,1) = elbx(1)
-         elvert(2,1) = elbx(3)
+         elvert(1,1) = elbox(1,ii)
+         elvert(2,1) = elbox(3,ii)
 
-         elvert(1,2) = elbx(2)
-         elvert(2,2) = elbx(3)
+         elvert(1,2) = elbox(2,ii)
+         elvert(2,2) = elbox(3,ii)
 
-         elvert(1,3) = elbx(2)
-         elvert(2,3) = elbx(4)
+         elvert(1,3) = elbox(2,ii)
+         elvert(2,3) = elbox(4,ii)
 
-         elvert(1,4) = elbx(1)
-         elvert(2,4) = elbx(4)
+         elvert(1,4) = elbox(1,ii)
+         elvert(2,4) = elbox(4,ii)
 
          IF (nsd.eq.3) THEN
          
-         elvert(3,1) = elbx(5)
-         elvert(3,2) = elbx(5)
-         elvert(3,3) = elbx(5)
-         elvert(3,4) = elbx(5)
+         elvert(3,1) = elbox(5,ii)
+         elvert(3,2) = elbox(5,ii)
+         elvert(3,3) = elbox(5,ii)
+         elvert(3,4) = elbox(5,ii)
 
-         elvert(1,5) = elbx(1)
-         elvert(2,5) = elbx(3)
-         elvert(3,5) = elbx(6)
+         elvert(1,5) = elbox(1,ii)
+         elvert(2,5) = elbox(3,ii)
+         elvert(3,5) = elbox(6,ii)
 
-         elvert(1,6) = elbx(2)
-         elvert(2,6) = elbx(3)
-         elvert(3,6) = elbx(6)
+         elvert(1,6) = elbox(2,ii)
+         elvert(2,6) = elbox(3,ii)
+         elvert(3,6) = elbox(6,ii)
 
-         elvert(1,7) = elbx(2)
-         elvert(2,7) = elbx(4)
-         elvert(3,7) = elbx(6)
+         elvert(1,7) = elbox(2,ii)
+         elvert(2,7) = elbox(4,ii)
+         elvert(3,7) = elbox(6,ii)
 
-         elvert(1,8) = elbx(1)
-         elvert(2,8) = elbx(4)
-         elvert(3,8) = elbx(6)
+         elvert(1,8) = elbox(1,ii)
+         elvert(2,8) = elbox(4,ii)
+         elvert(3,8) = elbox(6,ii)
 
          END IF
 
@@ -460,46 +504,46 @@
             ALLOCATE(facels(ii)%elbox(2*nsd,msh%fa(ii)%nEl))
             do jj = 1,msh%fa(ii)%nEl
                   do kk = 1,nsd
-                        elbx(2*kk-1) = 
+                        elboxf(2*kk-1) = 
      2            MINVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
-                        elbx(2*kk  ) =
+                        elboxf(2*kk  ) =
      2            MAXVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
                   end do
 
-                  elvert(1,1) = elbx(1)
-                  elvert(2,1) = elbx(3)
+                  elvert(1,1) = elboxf(1)
+                  elvert(2,1) = elboxf(3)
          
-                  elvert(1,2) = elbx(2)
-                  elvert(2,2) = elbx(3)
+                  elvert(1,2) = elboxf(2)
+                  elvert(2,2) = elboxf(3)
          
-                  elvert(1,3) = elbx(2)
-                  elvert(2,3) = elbx(4)
+                  elvert(1,3) = elboxf(2)
+                  elvert(2,3) = elboxf(4)
          
-                  elvert(1,4) = elbx(1)
-                  elvert(2,4) = elbx(4)
+                  elvert(1,4) = elboxf(1)
+                  elvert(2,4) = elboxf(4)
          
                   IF (nsd.eq.3) THEN
                   
-                  elvert(3,1) = elbx(5)
-                  elvert(3,2) = elbx(5)
-                  elvert(3,3) = elbx(5)
-                  elvert(3,4) = elbx(5)
+                  elvert(3,1) = elboxf(5)
+                  elvert(3,2) = elboxf(5)
+                  elvert(3,3) = elboxf(5)
+                  elvert(3,4) = elboxf(5)
          
-                  elvert(1,5) = elbx(1)
-                  elvert(2,5) = elbx(3)
-                  elvert(3,5) = elbx(6)
+                  elvert(1,5) = elboxf(1)
+                  elvert(2,5) = elboxf(3)
+                  elvert(3,5) = elboxf(6)
          
-                  elvert(1,6) = elbx(2)
-                  elvert(2,6) = elbx(3)
-                  elvert(3,6) = elbx(6)
+                  elvert(1,6) = elboxf(2)
+                  elvert(2,6) = elboxf(3)
+                  elvert(3,6) = elboxf(6)
          
-                  elvert(1,7) = elbx(2)
-                  elvert(2,7) = elbx(4)
-                  elvert(3,7) = elbx(6)
+                  elvert(1,7) = elboxf(2)
+                  elvert(2,7) = elboxf(4)
+                  elvert(3,7) = elboxf(6)
          
-                  elvert(1,8) = elbx(1)
-                  elvert(2,8) = elbx(4)
-                  elvert(3,8) = elbx(6)
+                  elvert(1,8) = elboxf(1)
+                  elvert(2,8) = elboxf(4)
+                  elvert(3,8) = elboxf(6)
                   END IF
                   
 !        Just doing subroutine idsb, but I haven't made the searchboxes yet so I can't call it
@@ -692,7 +736,7 @@
       CLASS(prtType), INTENT(IN),TARGET :: prt
       INTEGER, INTENT(IN) :: ip
       TYPE(mshType), INTENT(IN) :: msh
-      REAL(KIND=8) :: N(msh%eNoN)
+      REAL(KIND=8) :: N(msh%eNoN), xl(nsd,msh%eNoN)
       TYPE(pRawType), POINTER :: p
       TYPE(boxType),  POINTER :: b
       INTEGER :: ii, ind
@@ -708,7 +752,9 @@
             ELSE
                   ind = b%els(ii-1)
             END IF
-            N = msh%nAtx(p%x,msh%x(:,msh%IEN(:,ind)))
+
+            xl = msh%x(:,msh%IEN(:,ind))
+            N = msh%nAtx(p%x,xl)
 
             ! Checking if all shape functions are positive
             IF (ALL(N.ge.-1.0D-7)) then

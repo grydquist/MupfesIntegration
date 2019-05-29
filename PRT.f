@@ -13,11 +13,6 @@
 !     Temporary holder for types of faces
       INTEGER, ALLOCATABLE :: faTyp(:)
 
-!     Face element boxes
-      TYPE facelsboxType
-            REAL(KIND=8), ALLOCATABLE :: elbox(:,:)
-      END TYPE
-
 !     Faces and their elements
       TYPE facelsType
       ! Elements of face
@@ -282,15 +277,13 @@
       CLASS(mshType), INTENT(IN) :: msh
       INTEGER, INTENT(IN) :: np
       CLASS(sbType), INTENT(INOUT):: sb
-      TYPE(facelsboxType), ALLOCATABLE :: facels(:)
       TYPE(boxType) :: tmpbox
       INTEGER :: ii,jj,cnt2,kk,ll, iSb(2**nsd),xsteps(2**nsd)
-     2  , n(nsd),a, s
+     2  , n(nsd),a
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
       REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl), eps(nsd),
      2 elboxf(2**nsd),elvert(nsd,2**nsd),xzero(nsd), order(nsd,2)
-     3 , npr, maxel(nsd)
-      INTEGER, ALLOCATABLE :: sbel(:),sbelf(:),totSB(:)
+     3 , maxel(nsd), s
       LOGICAL :: orderl(nsd)
 
       IF (sb%crtd) RETURN
@@ -313,16 +306,16 @@
       order(:,2) = order(:,2)/order(1,2)
 
 !     Scaling to get approximately cubic SBs equal to approx number of particles
-      npr = np
-      s = (npr/(order(2,2)*order(3,2)))**(1D0/3D0)
+      s = (np/(order(2,2)*order(3,2)))**(1D0/3D0)
       
 !     First n estimate
-      n = s*order(:,2)
+      n = INT(s*order(:,2))
+      
 !     Size of sb
       sb%step = diff/((n + 1D0)/2D0)
 
 !     Now we check to make sure the dimensions of the SBs are bigger than the elements, so we don't miss an element
-!     We start by making boxes around the elements, which we will use later as well, and getting maxel size
+!     We start by making boxes around the elements, which we will use later as well, and getting max element size
       
       maxel = 0
       DO ii=1,msh%Nel
@@ -336,7 +329,7 @@
             ENDDO
       ENDDO
       
-!     If the elements are larger, set it so they're approximately the same size
+!     If the elements are larger, set the boxes to the first one where they're bigger
       DO ii =1,nsd
             IF (maxel(ii).gt.sb%step(ii))
      2       n(ii) = diff(ii)/maxel(ii)*2D0 - 1D0
@@ -348,18 +341,17 @@
 !     Here's the final number of sb's in each direction!
       sb%n = n
 
+!     Final size of sb
+      sb%step = diff/((sb%n + 1D0)/2D0) 
+
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
       ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
-      ALLOCATE(sbel(msh%nEl))
-      ALLOCATE(facels(msh%nFa))
-      ALLOCATE(sbelf(MAXVAL(msh%fa(:)%nEl)))
 
       ! these sequences are just for allocating sbdim
       ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
      2   ,seq3(sb%n(2)*sb%n(1)))
 
-!     Size of sb
-      sb%step = diff/((sb%n + 1D0)/2D0) 
+
             
       ! Tolerance, based off max between searchbox size (for particle going out of bounds)
       ! and max size needed for id'ing algorithm in idSB
@@ -501,7 +493,6 @@
 
 !     Same process as above, but got faces
       do ii = 1,msh%nFa
-            ALLOCATE(facels(ii)%elbox(2*nsd,msh%fa(ii)%nEl))
             do jj = 1,msh%fa(ii)%nEl
                   do kk = 1,nsd
                         elboxf(2*kk-1) = 
@@ -612,83 +603,6 @@
             end do
       end do
 
-      GOTO 190 !! Stupid comment hack
-      !! get rid of variables below and facelsboxtpe
-
-      ! Making boxes surrounding elements
-      do ii=1,msh%Nel
-         do jj=1,nsd
-            elbox(2*jj-1,ii) = MINVAL(msh%x(jj,msh%IEN(:,ii)))
-            elbox(2*jj  ,ii) = MAXVAL(msh%x(jj,msh%IEN(:,ii)))
-         end do
-      end do
-
-!     Make boxes around FACE elements
-      do ii = 1,msh%nFa
-            do jj = 1,msh%fa(ii)%nEl
-                  do kk = 1,nsd
-                        facels(ii)%elbox(2*kk-1,jj) = 
-     2            MINVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
-                        facels(ii)%elbox(2*kk  ,jj) =
-     2            MAXVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
-                  end do
-            end do
-      end do
-
-
-!     Populate boxes with elements
-      do ii = 1,sb%n(1)*sb%n(2)*sb%n(3)
-         ALLOCATE(sb%box(ii)%fa(msh%nFa))
-         ALLOCATE(sb%box(ii)%c(1))
-         cnt2 = 1
-         sbel = 0
-         outer: do jj = 1,msh%Nel
-!           Check if elements are completely outside searchbox
-            inner: do kk = 1,nsd
-!              Cycle if min value elbox .gt. max value searchbox & vice-verse
-               if (elbox(2*kk-1,jj).gt.sb%box(ii)%dim(2*kk  ))
-     2            cycle outer
-               if (elbox(2*kk  ,jj).lt.sb%box(ii)%dim(2*kk-1))
-     2            cycle outer
-            enddo inner
-
-            sbel(cnt2) = jj
-            cnt2=cnt2+1
-         enddo outer
-         ALLOCATE(sb%box(ii)%els(cnt2-1))
-         sb%box(ii)%els=sbel(1:cnt2-1)
-
-!        Now check face elements
-!        Loop over faces
-         outer2: do jj = 1,msh%nFa
-         sbelf = 0
-         cnt2  = 1
-            middle: do kk = 1,msh%fa(jj)%nEl
-                  inner2: do ll = 1,nsd
-!                 Check if face elements are completely outside searchboxes
-                  IF (MAXVAL(facels(jj)%elbox(2*ll  ,:)).lt.
-     2            sb%box(ii)%dim(2*ll-1)) cycle outer2
-
-                  IF (MINVAL(facels(jj)%elbox(2*ll-1,:)).gt.
-     2            sb%box(ii)%dim(2*ll  )) cycle outer2
-
-!                 Cycle if min value facels .gt. max value searchbox & vice-verse
-                  if (facels(jj)%elbox(2*ll-1,kk).gt.
-     2                  sb%box(ii)%dim(2*ll  )) cycle middle
-                  if (facels(jj)%elbox(2*ll  ,kk).lt.
-     2                  sb%box(ii)%dim(2*ll-1)) cycle middle
-                  enddo inner2
-
-                  sbelf(cnt2) = kk
-                  cnt2 = cnt2 + 1
-            enddo middle
-            ALLOCATE(sb%box(ii)%fa(jj)%els(cnt2-1))
-            sb%box(ii)%fa(jj)%els = sbelf(1:cnt2-1)
-         enddo outer2
-      end do
-
-  190 continue
-
       sb%crtd = .TRUE.
 
       RETURN
@@ -785,10 +699,11 @@
            p%pID  = INT(ip,8)
            CALL RANDOM_NUMBER(p%x(:))
            IF (nsd .EQ. 2) p%x(3) = 0D0
-           !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*2D0
-           p%x(1) = 0D0
-           p%x(2) = 0D0
-           p%x(3) = 150D0/ip
+           p%x(3) = p%x(3)*15D0
+           p%x = (p%x - (/0.5D0,0.5D0,0D0/))*20D0
+           !p%x(1) = 0D0
+           !p%x(2) = 0D0
+           !p%x(3) = 150D0/ip
            prt%dat(ip) = p
       END DO
 

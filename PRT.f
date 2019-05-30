@@ -258,7 +258,7 @@
             CASE DEFAULT
             io%e = "Select inlet, outlet, or wall Face type"         
          END SELECT
-      END DO
+      ENDDO
 
 
       RETURN
@@ -282,7 +282,7 @@
       DO i=1, eq%n
          eq%ptr(i) = i
          ALLOCATE(eq%dat(i)%N(eq%dmn%msh(1)%eNoN))
-      END DO
+      ENDDO
       eq%mat  => FIND_MAT('Particle')
       eq%var(1) = gVarType(nsd,'PVelocity',eq%dmn)
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
@@ -296,8 +296,8 @@
             DO a = 1,eq%dmn%msh(1)%eNoN
                   Ac = eq%dmn%msh(1)%IEN(a,i)
                   eq%wV(Ac) = eq%wV(Ac) + volt(a)
-            END DO
-      END DO
+            ENDDO
+      ENDDO
 
       CALL eq%seed()
 
@@ -308,12 +308,11 @@
       INTEGER, INTENT(IN) :: np
       CLASS(sbeType), INTENT(INOUT):: sb
       TYPE(boxelType) :: tmpbox
-      INTEGER :: ii,jj,cnt2,kk,ll, iSb, xsteps(nsd)
-     2  , n(nsd)
+      INTEGER :: ii,jj,cnt2,kk, iSb, xsteps(nsd)
+     2  , xstepst(nsd,2), iSBmin, SBt,cx,cy,cz
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
-      REAL(KIND=8) :: diff(nsd), elbox(2*nsd,msh%nEl),
-     2 elboxf(2**nsd),elvert(nsd,2**nsd),xzero(nsd), order(nsd,2)
-     3 , maxel(nsd), s
+      REAL(KIND=8) :: diff(nsd),elvert(nsd,2),xzerot(nsd,2)
+     2 , order(nsd,2), s,xzero(nsd)
       LOGICAL :: orderl(nsd)
 
       IF (sb%crtd) RETURN
@@ -334,42 +333,14 @@
       order(:,2) = order(:,2)/order(1,2)
 
 !     Scaling to get approximately cubic SBs equal to approx number of particles
-      s = ((np*msh%nEl)**(0.5)/(order(2,2)*order(3,2)))**(1D0/3D0)
+      s = (10*msh%nEl/(order(2,2)*order(3,2)))**(1D0/3D0)
       
 !     First n estimate
       DO ii = 1,nsd
-            n(order(ii,1)) = INT(s*order(ii,2))
+            sb%n(order(ii,1)) = INT(s*order(ii,2))
       ENDDO
       
 !     Size of sb
-      sb%step = diff/n
-
-!     Now we check to make sure the dimensions of the SBs are bigger than the elements, so we don't miss an element
-!     We start by making boxes around the elements, which we will use later as well, and getting max element size
-      
-      maxel = 0
-      DO ii=1,msh%Nel
-            DO jj=1,nsd
-               elbox(2*jj-1,ii) = MINVAL(msh%x(jj,msh%IEN(:,ii)))
-               elbox(2*jj  ,ii) = MAXVAL(msh%x(jj,msh%IEN(:,ii)))
-
-!              Updating max element size
-               IF((elbox(2*jj,ii)-elbox(2*jj-1,ii)).gt.maxel(jj))
-     2            maxel(jj) = elbox(2*jj,ii)-elbox(2*jj-1,ii)
-            ENDDO
-      ENDDO
-      
-!     If the elements are larger, set the box number to the first one where they're bigger
-      DO ii =1,nsd
-            IF (maxel(ii).gt.sb%step(ii))
-     2       n(ii) = diff(ii)/maxel(ii)
-      ENDDO
-      
-!     Here's the final number of sb's in each direction!
-      sb%n = n
-      print *, n
-
-!     Final size of sb
       sb%step = diff/sb%n
 
 !     Dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
@@ -381,29 +352,29 @@
 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
-      do ii=1,sb%n(1)*sb%n(3)
+      DO ii=1,sb%n(1)*sb%n(3)
             seq2(ii)=ii+cnt2*(sb%n(2)-1)*sb%n(1)
             if (MOD(ii,sb%n(1)).eq.0) cnt2=cnt2+1
-      end do
+      ENDDO
       seq3=(/(ii, ii=0, sb%n(1)*sb%n(2)-1, 1)/)+1
 
       ! Direction 1
-      do ii=1,sb%n(1)
-         sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:))      !! Check dims here
+      DO ii=1,sb%n(1)
+         sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:))
      2       + sb%step(1)*(ii-1)
-      end do
+      ENDDO
 
       ! Direction 2
-      do ii=1,sb%n(2)
+      DO ii=1,sb%n(2)
          sb%box(seq2+(ii-1)*sb%n(1))%dim(3) = MINVAL(msh%x(2,:))
      2       + sb%step(2)*(ii-1)
-      end do
+      ENDDO
 
       ! Direction 3
-      do ii=1,sb%n(3)
+      DO ii=1,sb%n(3)
          sb%box(seq3+(ii-1)*sb%n(1)*sb%n(2))%dim(5)=
      2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)
-      end do
+      ENDDO
 
       sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
       sb%box%dim(4) = sb%box%dim(3) + sb%step(2)
@@ -415,67 +386,61 @@
 
       ! Finding the sbs the box vertices are in
       DO ii=1,msh%Nel
-         elvert(1,1) = elbox(1,ii)
-         elvert(2,1) = elbox(3,ii)
-
-         elvert(1,2) = elbox(2,ii)
-         elvert(2,2) = elbox(3,ii)
-
-         elvert(1,3) = elbox(2,ii)
-         elvert(2,3) = elbox(4,ii)
-
-         elvert(1,4) = elbox(1,ii)
-         elvert(2,4) = elbox(4,ii)
+            elvert(1,1) = MINVAL(msh%x(1,msh%IEN(:,ii)))
+            elvert(1,2) = MAXVAL(msh%x(1,msh%IEN(:,ii)))
+            elvert(2,1) = MINVAL(msh%x(2,msh%IEN(:,ii)))
+            elvert(2,2) = MAXVAL(msh%x(2,msh%IEN(:,ii)))
 
          IF (nsd.eq.3) THEN
-         
-         elvert(3,1) = elbox(5,ii)
-         elvert(3,2) = elbox(5,ii)
-         elvert(3,3) = elbox(5,ii)
-         elvert(3,4) = elbox(5,ii)
-
-         elvert(1,5) = elbox(1,ii)
-         elvert(2,5) = elbox(3,ii)
-         elvert(3,5) = elbox(6,ii)
-
-         elvert(1,6) = elbox(2,ii)
-         elvert(2,6) = elbox(3,ii)
-         elvert(3,6) = elbox(6,ii)
-
-         elvert(1,7) = elbox(2,ii)
-         elvert(2,7) = elbox(4,ii)
-         elvert(3,7) = elbox(6,ii)
-
-         elvert(1,8) = elbox(1,ii)
-         elvert(2,8) = elbox(4,ii)
-         elvert(3,8) = elbox(6,ii)
-
+            elvert(3,1) = MINVAL(msh%x(3,msh%IEN(:,ii)))
+            elvert(3,2) = MAXVAL(msh%x(3,msh%IEN(:,ii)))
          END IF
 
-!        Just doing subroutine idsb, but I haven't made the searchboxes yet so I can't call it
-         addloop: DO jj = 1,2**nsd
-            ! Set domain back to zero
-            xzero(1) = elvert(1,jj) - sb%minx(1)
-            xzero(2) = elvert(2,jj) - sb%minx(2)
-            xzero(3) = elvert(3,jj) - sb%minx(3)
+!           Set domain back to zero
+            xzerot(1,:) = elvert(1,:) - sb%minx(1)
+            xzerot(2,:) = elvert(2,:) - sb%minx(2)
+            xzerot(3,:) = elvert(3,:) - sb%minx(3)
 
-            ! Find which searchbox the particle is in
-            ! Number of searchbox steps in x,y,and z
-            xsteps = FLOOR(xzero/sb%step)
+!           Number of searchbox steps in x,y,and z for both extreme vertices
+            xstepst(1,:) = FLOOR(xzerot(1,:)/sb%step(1))
+            xstepst(2,:) = FLOOR(xzerot(2,:)/sb%step(2))
+            xstepst(3,:) = FLOOR(xzerot(3,:)/sb%step(3))
 
-            ! Searchbox the element is in
-            iSb = xsteps(1) + sb%n(1)*xsteps(2) +
-     2     sb%n(1)*sb%n(2)*xsteps(3) + 1
+!           Difference between SB steps for extreme vertices
+            xsteps = xstepst(:,2) - xstepst(:,1)
 
-!           Add element to sb (if sb exists)
+!           Furthest back SB the element is in
+            iSBmin = xstepst(1,1) + sb%n(1)*xstepst(2,1) +
+     2     sb%n(1)*sb%n(2)*xstepst(3,1) + 1
+
+!           Now with this range, we can find all the SBs the element is in
+!           Total SBs this particle is in
+            SBt = (xsteps(1)+1)*(xsteps(2)+1)*(xsteps(3)+1)
+            cx = 0
+            cy = 0
+            cz = 0
+
+!           Loop over all SBs this element is in and add them
+            DO jj = 1,SBt
+!                 First we need to find the current ID of the SB we're in
+                  iSB = iSBmin  + cx + cy*sb%n(1)
+     2                          + cz*sb%n(1)*sb%n(2)
+                  cx = cx + 1
+                  IF (cx .gt. xsteps(1)) THEN
+                        cx = 0
+                        cy = cy + 1
+                  END IF
+                  IF (cy .gt. xsteps(2)) THEN
+                        cy = 0
+                        cz = cz + 1
+                  END IF
+
+!                 Add element to sb (if sb exists)
                   IF ((iSb.gt.0)
      2    .and.(iSb.le.sb%n(1)*sb%n(2)*sb%n(3))) THEN
 
-!           If this isn't the first element going in the box
+!                 If this isn't the first element going in the box
                   IF (ALLOCATED(sb%box(iSb)%els))THEN
-!           First check if the element has been added already
-                        IF (ANY(sb%box(iSb)%els.eq.ii))
-     2                  cycle addloop
 
                         ALLOCATE(tmpbox%els(
      2            size(sb%box(iSb)%els)+1))
@@ -488,88 +453,83 @@
                         sb%box(iSb)%els(size(tmpbox%els)) =
      2            ii
                         DEALLOCATE(tmpbox%els)
-!           If this is the first element in the box
+!                 If this is the first element in the box
                   ELSE
                         ALLOCATE(sb%box(iSb)%els(1))
                         sb%box(iSb)%els(1) = ii
                   END IF
                   END IF
-         END DO addloop
+            ENDDO
       ENDDO
 
-!     Same process as above, but got faces
-      do ii = 1,msh%nFa
-            do jj = 1,msh%fa(ii)%nEl
-                  do kk = 1,nsd
-                        elboxf(2*kk-1) = 
-     2            MINVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
-                        elboxf(2*kk  ) =
-     2            MAXVAL(msh%x(kk,msh%fa(ii)%IEN(:,jj)))
-                  end do
+!     Same process as above, but for faces
+      DO ii = 1,msh%nFa
+            DO jj = 1,msh%fa(ii)%nEl
 
-                  elvert(1,1) = elboxf(1)
-                  elvert(2,1) = elboxf(3)
+                  elvert(1,1) = 
+     2             MINVAL(msh%x(1,msh%fa(ii)%IEN(:,jj)))
+                  elvert(1,2) = 
+     2             MAXVAL(msh%x(1,msh%fa(ii)%IEN(:,jj)))
          
-                  elvert(1,2) = elboxf(2)
-                  elvert(2,2) = elboxf(3)
-         
-                  elvert(1,3) = elboxf(2)
-                  elvert(2,3) = elboxf(4)
-         
-                  elvert(1,4) = elboxf(1)
-                  elvert(2,4) = elboxf(4)
+                  elvert(2,1) = 
+     2             MINVAL(msh%x(2,msh%fa(ii)%IEN(:,jj)))
+                  elvert(2,2) = 
+     2             MAXVAL(msh%x(2,msh%fa(ii)%IEN(:,jj)))
          
                   IF (nsd.eq.3) THEN
-                  
-                  elvert(3,1) = elboxf(5)
-                  elvert(3,2) = elboxf(5)
-                  elvert(3,3) = elboxf(5)
-                  elvert(3,4) = elboxf(5)
-         
-                  elvert(1,5) = elboxf(1)
-                  elvert(2,5) = elboxf(3)
-                  elvert(3,5) = elboxf(6)
-         
-                  elvert(1,6) = elboxf(2)
-                  elvert(2,6) = elboxf(3)
-                  elvert(3,6) = elboxf(6)
-         
-                  elvert(1,7) = elboxf(2)
-                  elvert(2,7) = elboxf(4)
-                  elvert(3,7) = elboxf(6)
-         
-                  elvert(1,8) = elboxf(1)
-                  elvert(2,8) = elboxf(4)
-                  elvert(3,8) = elboxf(6)
+                        elvert(3,1) = 
+     2             MINVAL(msh%x(3,msh%fa(ii)%IEN(:,jj)))
+                        elvert(3,2) = 
+     2             MAXVAL(msh%x(3,msh%fa(ii)%IEN(:,jj)))
                   END IF
-                  
-!        Just doing subroutine idsb, but I haven't made the searchboxes yet so I can't call it
-         addloop2: DO kk = 1,2**nsd
-            ! Set domain back to zero
-            xzero(1) = elvert(1,kk) - sb%minx(1)
-            xzero(2) = elvert(2,kk) - sb%minx(2)
-            xzero(3) = elvert(3,kk) - sb%minx(3)
+         
+!                 Set domain back to zero
+                  xzerot(1,:) = elvert(1,:) - sb%minx(1)
+                  xzerot(2,:) = elvert(2,:) - sb%minx(2)
+                  xzerot(3,:) = elvert(3,:) - sb%minx(3)
+         
+!                 Find which searchbox the particle is in
+!                 Number of searchbox steps in x,y,and z for both extreme vertices
+                  xstepst(1,:) = FLOOR(xzerot(1,:)/sb%step(1))
+                  xstepst(2,:) = FLOOR(xzerot(2,:)/sb%step(2))
+                  xstepst(3,:) = FLOOR(xzerot(3,:)/sb%step(3))
+         
+!                 Difference between SB steps for extreme vertices
+                  xsteps = xstepst(:,2) - xstepst(:,1)
+         
+!                 Furthest back SB the element is in
+                  iSBmin = xstepst(1,1) + sb%n(1)*xstepst(2,1) +
+     2                        sb%n(1)*sb%n(2)*xstepst(3,1) + 1
+         
+!                 Now with this range, we can find all the SBs the element is in
+!                 Total SBs this particle is in
+                  SBt = (xsteps(1)+1)*(xsteps(2)+1)*(xsteps(3)+1)
+                  cx = 0
+                  cy = 0
+                  cz = 0
 
-            ! Find which searchbox the particle is in
-            ! Number of searchbox steps in x,y,and z
-            xsteps = FLOOR(xzero/sb%step)
+            DO kk = 1,SBt
+                  iSB = iSBmin  + cx + cy*sb%n(1)
+     2                          + cz*sb%n(1)*sb%n(2)
+                  cx = cx + 1
+                  IF (cx .gt. xsteps(1)) THEN
+                        cx = 0
+                        cy = cy + 1
+                  END IF
+                  IF (cy .gt. xsteps(2)) THEN
+                        cy = 0
+                        cz = cz + 1
+                  END IF
 
-            ! SB el is in
-            iSb = xsteps(1) + sb%n(1)*xsteps(2) +
-     2     sb%n(1)*sb%n(2)*xsteps(3) + 1
-
-!           Add element to sb (if sb exists/element hasn't been added)
+!                 Add element to sb (if sb exists/element hasn't been added)
                   IF ((iSb.gt.0)
      2    .and.(iSb.le.sb%n(1)*sb%n(2)*sb%n(3))) THEN
-!           First we need to allocate the face structure of the sb...
+!                 First we need to allocate the face structure of the sb...
                         IF(.not.ALLOCATED(sb%box(iSb)%fa))
      2                  ALLOCATE(sb%box(iSb)%fa(msh%nFa))             
 
-!           If this isn't the first element going in the box
+!                 If this isn't the first element going in the box
                   IF (ALLOCATED(sb%box(iSb)%fa(ii)%els))THEN
-!           First check if the element has been added already
-                        IF (ANY(sb%box(iSb)%fa(ii)%els.eq.jj))
-     2                  cycle addloop2
 
                         ALLOCATE(tmpbox%els(
      2            size(sb%box(iSb)%fa(ii)%els)+1))
@@ -582,16 +542,15 @@
                         sb%box(iSb)%fa(ii)%els(size(tmpbox%els)) =
      2            jj
                         DEALLOCATE(tmpbox%els)
-!           If this is the first element in the box
+!                 If this is the first element in the box
                   ELSE
                         ALLOCATE(sb%box(iSb)%fa(ii)%els(1))
                         sb%box(iSb)%fa(ii)%els = jj
                   END IF
-                  END IF
-         END DO addloop2
-         
-            end do
-      end do
+                  END IF 
+            ENDDO       
+            ENDDO
+      ENDDO
 
       sb%crtd = .TRUE.
 
@@ -652,30 +611,30 @@
 
       seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
       cnt2=0
-      do ii=1,sb%n(1)*sb%n(3)
+      DO ii=1,sb%n(1)*sb%n(3)
             seq2(ii)=ii+cnt2*(sb%n(2)-1)*sb%n(1)
             if (MOD(ii,sb%n(1)).eq.0) cnt2=cnt2+1
-      end do
+      ENDDO
       seq3=(/(ii, ii=0, sb%n(1)*sb%n(2)-1, 1)/)+1
 
       ! Allocating sb, such that they overlap by 50%
       ! Direction 1
-      do ii=1,sb%n(1)
+      DO ii=1,sb%n(1)
          sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:)) 
      2       + sb%step(1)*(ii-1)/2
-      end do
+      ENDDO
 
       ! Direction 2
-      do ii=1,sb%n(2)
+      DO ii=1,sb%n(2)
          sb%box(seq2+(ii-1)*sb%n(1))%dim(3) = MINVAL(msh%x(2,:))
      2       + sb%step(2)*(ii-1)/2
-      end do
+      ENDDO
 
       ! Direction 3
-      do ii=1,sb%n(3)
+      DO ii=1,sb%n(3)
          sb%box(seq3+(ii-1)*sb%n(1)*sb%n(2))%dim(5)=
      2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2
-      end do
+      ENDDO
 
       sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
       sb%box%dim(4) = sb%box%dim(3) + sb%step(2)
@@ -769,8 +728,7 @@
       p => prt%dat(ip)
       IF (p%sbIDe .eq. -1) RETURN
       b => prt%sbe%box(p%sbIDe)
-
-      do ii=1,size(b%els)+1
+      DO ii=1,size(b%els)+1
 
             IF (ii.eq.1) THEN
                   ind = p%eIDo
@@ -788,12 +746,12 @@
                   EXIT
             END IF
          
-      end do
+      ENDDO
 
-      ! If it loops through everything and doesn't yield a positive shape function,
+      ! If it loops through everything and DOesn't yield a positive shape function,
       ! the particle is outside the domain.
 
-      !! Needs fixing for no tolerancing now (will need to be done in idsbe so it lets us know if we're oob there)
+      !! Needs fixing for no tolerancing now (will need to be DOne in idsbe so it lets us know if we're oob there)
       RETURN
       END FUNCTION shapeFPrt
 !--------------------------------------------------------------------
@@ -817,13 +775,13 @@
            !p%x(1) = 0D0
            !p%x(2) = 0D0
            !p%x(3) = 150D0/ip
-           !p%x(3) = 0.21D0
+           !p%x(3) = 0.01D0
            !if (ip.eq.2) p%x(3)=0.1D0
            p%sbIDp = prt%sbp%id(p%x)
            p%sbIDe = prt%sbe%id(p%x)
            prt%dat(ip) = p
            N = prt%shapef(ip,prt%dmn%msh(1))
-      END DO
+      ENDDO
 
       RETURN
       END SUBROUTINE seedPrt
@@ -860,11 +818,11 @@
 
       IF(.not. ALLOCATED(p%N))
      2 ALLOCATE(p%N(msh%eNoN)) 
-      do ii=1,nsd
-         do jj=1,msh%eNoN
+      DO ii=1,nsd
+         DO jj=1,msh%eNoN
             fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
-         end do
-      end do
+         ENDDO
+      ENDDO
 
       ! Relative velocity
       relvel = fvel - p%u
@@ -1009,7 +967,7 @@
       vperp2 = sum(t2*p2%u)
       vpar2  = sum(n2*p2%u)
 
-      ! Note that perpendicular velocities don't change, so we only need to calculate parallel
+      ! Note that perpendicular velocities DOn't change, so we only need to calculate parallel
       pa = mp*vpar1 - mp*vpar2
       pb = (-vpar1 - vpar2)*k
 
@@ -1115,7 +1073,7 @@
 !           Finding A*x_1
              DO a = 1,nsd
             Bm(a) = Am(a,1)*x1(1) + Am(a,2)*x1(2) + Am(a,3)*x1(3)
-             END DO
+             ENDDO
 
 !           Finding B = xi_1 - A*x_1
             Bm = msh%xi(:,1) - Bm
@@ -1369,7 +1327,7 @@
             Ac = prt%dmn%msh(1)%IEN(jj,p%eID)
             prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
      2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
-      END DO
+      ENDDO
 
 !     Advance to collision location
       p%xc = p%u*p%ti + p%x
@@ -1429,7 +1387,7 @@
 !     Indices and coordinates of nodes
       DO a = 1,msh%eNoN
             Ac(a) = msh%IEN(a,e)
-      END DO
+      ENDDO
 
       x = msh%x(:,Ac)      
 
@@ -1439,8 +1397,8 @@
             DO a = 1, msh%eNoN
 !           Numerically integrate to get volume of each node
                   effvol(a) = effvol(a) + msh%N(a,g)*Jac*msh%w(g)
-            END DO
-      END DO
+            ENDDO
+      ENDDO
 
       END FUNCTION
 
@@ -1504,7 +1462,7 @@
 !     Total acceleration (just drag and buoyancy now)
       apT = apd + g*(1D0 - rhoF/rhoP)
 
-!!    For now, I'm just going to do 1st order. It eases a lot of optimization stuff
+!!    For now, I'm just going to DO 1st order. It eases a lot of optimization stuff
 
 !!     2nd order advance (Heun's Method)
 !!     Predictor
@@ -1542,7 +1500,7 @@
             prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
      2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
 !     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
-      END DO
+      ENDDO
 
       IF (prt%itr .EQ. 0) THEN
             tmpwr = apd
@@ -1561,7 +1519,7 @@
       p%sbIDe = sbe%id(p%x)
       N = prt%shapeF(idp, msh)
 
-!     If so, do a wall collision and continue on
+!     If so, DO a wall collision and continue on
       IF (ANY(N .le. -1D-7)) THEN
             p%x = p%xo
             p%sbIDe = tsbIDe
@@ -1624,7 +1582,7 @@
             IF (ALLOCATED(eq%sbp%box(i)%c))
      2      DEALLOCATE(eq%sbp%box(i)%c)
             ALLOCATE(eq%sbp%box(i)%c(1))
-      END DO
+      ENDDO
       END IF
 
       DO i=1,eq%n
@@ -1730,7 +1688,7 @@
             CALL eq%adv(i)
             IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
      2            eq%dat(i)%u(3)
-      END DO
+      ENDDO
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
@@ -1761,3 +1719,4 @@
       !! Collisions still checks every other particle after it has already collided
       !! Mult collisions still need quite a bit of work to keep time consistent (if remdt1 .ne. remdt2)
       !! Don't have it implemented so it can hit multiple walls
+      !! Make sbs not order NB^1/3

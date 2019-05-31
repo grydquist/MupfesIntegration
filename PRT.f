@@ -64,6 +64,8 @@
          LOGICAL :: crtd = .FALSE.
 !     Number of boxes in each direction
          INTEGER n(3)
+!     Total boxes
+         INTEGER nt
 !     Size of boxes
          REAL(KIND=8) :: step(3)
 !     Individual boxes
@@ -75,6 +77,12 @@
          PROCEDURE :: new => newSbp
 !     Returns serach box ID, provided the position of a point
          PROCEDURE :: id => idSbp
+!     Deallocates SB
+         PROCEDURE :: free => freeSBp
+!     Adds given particle IDs to SBs
+         PROCEDURE :: addprt => addprtSBp
+!     Removes given particle IDs to SBs
+         PROCEDURE :: rmprt => rmprtSBp
       END TYPE
 
 !     Your data type that you need to store in a Dynamic Sized Container
@@ -131,7 +139,7 @@
          TYPE(sbpType) :: SBp
 !     Array pointing to full and empty entries
          INTEGER, ALLOCATABLE :: ptr(:)
-!     Data
+!     Individual particle data
          TYPE(pRawType), ALLOCATABLE :: dat(:)
 !     Velocity, from NS
          TYPE(varType), POINTER :: Uns => NULL()
@@ -268,7 +276,7 @@
       SUBROUTINE setupPrt(eq, var)
       CLASS(prtType), INTENT(INOUT), TARGET :: eq
       TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
-      INTEGER i,a, Ac,cnt
+      INTEGER i,a, Ac
       REAL(KIND=8), ALLOCATABLE :: volt(:)
 
       open(88,file='pos.txt') 
@@ -278,7 +286,6 @@
       ALLOCATE(eq%collt(eq%n**2),eq%collpair(eq%n**2,2))
 
       eq%wV = 0D0
-      cnt =0
       DO i=1, eq%n
          eq%ptr(i) = i
          ALLOCATE(eq%dat(i)%N(eq%dmn%msh(1)%eNoN))
@@ -288,8 +295,7 @@
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
 !     Assuming everything is in first mesh for searchboxes
-      CALL eq%sbe%new(eq%dmn%msh(1), eq%n)
-      CALL eq%sbp%new(eq%dmn%msh(1), eq%n)
+      CALL eq%sbe%new(eq%dmn%msh(1))
 !     Getting volumes of influence for each node
       DO i = 1,eq%dmn%msh(1)%nEl
             volt = effvolel(eq%dmn%msh(1),i)
@@ -303,9 +309,8 @@
 
       END SUBROUTINE setupPrt
 !-------------------------------------------------------------------- Elements
-      SUBROUTINE newSbe(sb,msh,np)
+      SUBROUTINE newSbe(sb,msh)
       CLASS(mshType), INTENT(IN) :: msh
-      INTEGER, INTENT(IN) :: np
       CLASS(sbeType), INTENT(INOUT):: sb
       TYPE(boxelType) :: tmpbox
       INTEGER :: ii,jj,cnt2,kk, iSb, xsteps(nsd)
@@ -326,9 +331,9 @@
       order(1,1) = MINLOC(diff,1)
       orderl = .true.
       orderl(order(1,1)) = .false.
-      order(2,1) = MINLOC(diff,1, MASK = orderl)
+      order(2,1) = MINLOC(diff,1, orderl)
       orderl(order(2,1)) = .false.
-      order(3,1) = MINLOC(diff,1, MASK = orderl)
+      order(3,1) = MINLOC(diff,1, orderl)
       order(:,2) = diff(order(:,1))
       order(:,2) = order(:,2)/order(1,2)
 
@@ -558,52 +563,41 @@
       END SUBROUTINE newSbe
 
 !-------------------------------------------------------------------- Particles
-      SUBROUTINE newSbp(sb,msh,np)
+      SUBROUTINE newSbp(sb,msh,np,dmin)
       CLASS(mshType), INTENT(IN) :: msh
       INTEGER, INTENT(IN) :: np
+      REAL(KIND=8), INTENT(IN) :: dmin(nsd)
       CLASS(sbpType), INTENT(INOUT):: sb
       INTEGER :: ii,cnt2, iSb(2**nsd),xsteps(2**nsd)
-     2  , n(nsd)
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
-      REAL(KIND=8) :: diff(nsd), xzero(nsd), order(nsd,2)
-     2 , s
-      LOGICAL :: orderl(nsd)
+      REAL(KIND=8) :: diff(nsd), xzero(nsd), step(nsd), s
 
       IF (sb%crtd) RETURN
+!     Smallest possible SB (diam + possible travel distance)
 
 !     Domain ranges
       diff(1)=MAXVAL(msh%x(1,:))-MINVAL(msh%x(1,:))
       diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
       diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
 
-!     Ordering diff by index
-      order(1,1) = MINLOC(diff,1)
-      orderl = .true.
-      orderl(order(1,1)) = .false.
-      order(2,1) = MINLOC(diff,1, MASK = orderl)
-      orderl(order(2,1)) = .false.
-      order(3,1) = MINLOC(diff,1, MASK = orderl)
-      order(:,2) = diff(order(:,1))
-      order(:,2) = order(:,2)/order(1,2)
+!     Starting with particles the minimum traveling distance
+      step = dmin
+!     Scaling to get NB = NP
+      s = (diff(1)/step(1)*diff(2)/step(2)*diff(3)/step(3)/np)
+     2 **(1D0/3D0)
 
-!     Scaling to get approximately cubic SBs equal to approx number of particles
-      s = (np/(order(2,2)*order(3,2)))**(1D0/3D0)
+!     Applying this scaling
+      step = step*MAX(s,1D0)
       
-!     First n estimate
-      DO ii = 1,nsd
-            n(order(ii,1)) = INT(s*order(ii,2))
-      ENDDO
+!     Getting the number of boxes from this
+      sb%n = MAX(INT(diff/step),(/1,1,1/))
       
 !     Size of sb
-      sb%step = diff/((n + 1D0)/2D0)
-
-!     Here's the final number of sb's in each direction, 2 are needed at least !! to be fixed to make sure vel constraint is satisfied
-      DO ii = 1,nsd
-            sb%n(ii) = MAX(n(ii),2)
-      ENDDO
+      sb%step = diff/((sb%n + 1D0)/2D0)
+      sb%nt = sb%n(1)*sb%n(2)*sb%n(3)
 
       ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
-      ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
+      ALLOCATE(sb%box(sb%nt))
 
       ! these sequences are just for allocating sbdim
       ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
@@ -643,10 +637,80 @@
       sb%minx(2) = minval(sb%box(:)%dim(3))
       sb%minx(3) = minval(sb%box(:)%dim(5))
 
+!     Allocate SB particles in box
+      DO ii = 1,sb%nt
+            ALLOCATE(sb%box(ii)%c(1))
+      ENDDO
+      sb%box(:)%nprt = 0
+
       sb%crtd = .TRUE.
 
       RETURN
       END SUBROUTINE newSbp
+!-------------------------------------------------------------------- Particles
+!     Gets rid of SB
+      SUBROUTINE freeSBp(sb)
+      CLASS(sbpType), INTENT(INOUT):: sb
+      
+      IF (.not.(sb%crtd)) RETURN
+
+      DEALLOCATE(sb%box)
+
+      sb%crtd = .FALSE.
+
+
+      END SUBROUTINE freeSBp
+!-------------------------------------------------------------------- Particles
+!     Put particles in SBs
+      SUBROUTINE addprtSBp(sb,IDSBp,ip)
+      CLASS(sbpType), INTENT(INOUT):: sb
+      INTEGER, INTENT(IN) :: IDSBp(2**nsd), ip
+      INTEGER :: i
+      INTEGER, ALLOCATABLE :: tmpstck(:)
+      
+      DO i = 1,2**nsd
+            IF ((IDSBp(i).le.sb%nt).and. (IDSBp(i).gt.0)) THEN
+!     Increase number in box
+                  sb%box(IDSBp(i))%nprt = sb%box(IDSBp(i))%nprt + 1
+!     Temporarily hold old searchbox values
+                  tmpstck = sb%box(IDSBp(i))%c
+                  DEALLOCATE(sb%box(IDSBp(i))%c)
+!     Increase size of container by 1
+                  ALLOCATE(sb%box(IDSBp(i))%c(sb%box(IDSBp(i))%nprt))
+!     Add to end (a little different if it's the first element)
+                  IF (sb%box(IDSBp(i))%nprt.ne.1) THEN
+                        sb%box(IDSBp(i))%c
+     2                   (1:sb%box(IDSBp(i))%nprt-1)=tmpstck
+                        sb%box(IDSBp(i))%c
+     2                   (sb%box(IDSBp(i))%nprt) = ip
+                  ELSE
+                        sb%box(IDSBp(i))%c(1) = ip
+                  END IF
+            END IF
+      ENDDO
+
+      END SUBROUTINE addprtSBp
+!-------------------------------------------------------------------- Particles
+!     Put particles in SBs
+      SUBROUTINE rmprtSBp(sb,IDSBp,ip)
+      CLASS(sbpType), INTENT(INOUT):: sb
+      INTEGER, INTENT(IN) :: IDSBp(2**nsd), ip
+      INTEGER :: i
+      INTEGER, ALLOCATABLE :: tmpstck(:)
+      
+      DO i = 1,2**nsd
+            IF ((IDSBp(i).le.sb%nt) .and. (IDSBp(i).gt.0)) THEN
+!     Decrease number in box
+                  sb%box(IDSBp(i))%nprt = sb%box(IDSBp(i))%nprt - 1
+!     Make array of box without particle
+                  tmpstck = PACK(sb%box(IDSBp(i))%c, 
+     2                           sb%box(IDSBp(i))%c.ne.ip)  
+                  DEALLOCATE(sb%box(IDSBp(i))%c)
+                  sb%box(IDSBp(i))%c = tmpstck
+            END IF
+      ENDDO
+
+      END SUBROUTINE rmprtSBp
 !-------------------------------------------------------------------- Elements
 !     Returns the ID of the searchboxes that contains point x
       FUNCTION idSBe(sb,x) RESULT(iSb)
@@ -748,10 +812,8 @@
          
       ENDDO
 
-      ! If it loops through everything and DOesn't yield a positive shape function,
+      ! If it loops through everything and Doesn't yield a positive shape function,
       ! the particle is outside the domain.
-
-      !! Needs fixing for no tolerancing now (will need to be DOne in idsbe so it lets us know if we're oob there)
       RETURN
       END FUNCTION shapeFPrt
 !--------------------------------------------------------------------
@@ -761,8 +823,11 @@
       INTEGER ip
       TYPE(pRawType) p
       REAL, ALLOCATABLE :: N(:)
+      REAL(KIND=8) dmin(nsd)
 
       ALLOCATE(N(prt%dmn%msh(1)%eNoN))
+      dmin = prt%mat%D()
+      CALL prt%sbp%new(prt%dmn%msh(1),prt%n,dmin)
 
       CALL RSEED(cm%id())
       DO ip=1, prt%n
@@ -922,7 +987,7 @@
 
       prt%collcnt = prt%collcnt+1
       prt%collpair(prt%collcnt,:) = (/id1,id2/)
-      prt%collt(prt%collcnt) = tcr! + (dt) !something like this                    !! This needs to account for particles that have collided already
+      prt%collt(prt%collcnt) = tcr! + (dt) !something like this  !! This needs to account for particles that have collided already
 
       END SUBROUTINE findcollPrt
 
@@ -1541,10 +1606,11 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT):: eq
       INTEGER ip, a, e, eNoN, i ,j, k,l, subit, citer,i2,i1
+     2 ,IDSBp(2**nsd),IDSBp1(2**nsd),IDSBp2(2**nsd), i12,i22
       TYPE(mshType), POINTER :: lM
       INTEGER, ALLOCATABLE :: tmpstck(:), N(:)
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
-     2 P1, P2, rhoF
+     2 P1, P2, rhoF, umax(3) =0D0
 
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
@@ -1563,8 +1629,6 @@
 !     Particle relaxation time
       taup = rhoP*dp**2D0/mu/18D0
 
-!! Right now: I'm just going to take min of relaxation time and overall, but will need to make it eq%sb so I can only check neighboring eq%sb's
-
 !     Appropriate time step
       dtp = MIN(taup,dt)
 !     Subiterations
@@ -1576,13 +1640,12 @@
       DO l = 1,subit
 
       IF (eq%itr .EQ. 0) THEN
-!     Reset SB's particles
-      DO i = 1,eq%sbp%n(1)*eq%sbp%n(2)*eq%sbp%n(3) !! Still have 1 single sb loop...
-            eq%sbp%box(i)%nprt = 0
-            IF (ALLOCATED(eq%sbp%box(i)%c))
-     2      DEALLOCATE(eq%sbp%box(i)%c)
-            ALLOCATE(eq%sbp%box(i)%c(1))
-      ENDDO
+!     Reset SB for particles
+            DO i = 1, eq%n
+                  umax = MAX(umax,ABS(eq%dat(i)%u))
+            ENDDO
+            CALL eq%sbp%free()
+            CALL eq%sbp%new(eq%dmn%msh(1), eq%n,umax*dtp+dp)
       END IF
 
       DO i=1,eq%n
@@ -1594,37 +1657,10 @@
                   eq%dat(i)%sbIDeo= eq%dat(i)%sbIDe
                   eq%dat(i)%sbIDpo= eq%dat(i)%sbIDp
 
-!           Put particles in SBs
-            DO j = 1,2**nsd
-
-            IF ((eq%dat(i)%sbIDp(j).lt. 
-     2       eq%sbp%n(1)*eq%sbp%n(2)*eq%sbp%n(3))
-     3      .and. (eq%dat(i)%sbIDp(j).gt.0)) then
-!     Increase number in box
-                  eq%sbp%box(eq%dat(i)%sbIDp(j))%nprt = 
-     2            eq%sbp%box(eq%dat(i)%sbIDp(j))%nprt + 1
-
-            IF (.not. ALLOCATED(eq%sbp%box(eq%dat(i)%sbIDp(j))%c))
-     2      ALLOCATE(eq%sbp%box(eq%dat(i)%sbIDp(j))%c(1))       
-
-!     Temporarily hold old searchbox values
-                  tmpstck = eq%sbp%box(eq%dat(i)%sbIDp(j))%c
-                  DEALLOCATE(eq%sbp%box(eq%dat(i)%sbIDp(j))%c)
-!     Increase size of container by 1
-                  ALLOCATE(eq%sbp%box(eq%dat(i)%sbIDp(j))%
-     2             c(eq%sbp%box(eq%dat(i)%sbIDp(j))%nprt))
-!     Add to end (a little different if it's the first element)
-                  IF (eq%sbp%box(eq%dat(i)%sbIDp(j))%nprt.ne.1) THEN
-                  eq%sbp%box(eq%dat(i)%sbIDp(j))%c
-     2       (1:eq%sbp%box(eq%dat(i)%sbIDp(j))%nprt-1)=tmpstck
-                  eq%sbp%box(eq%dat(i)%sbIDp(j))%c
-     2             (eq%sbp%box(eq%dat(i)%sbIDp(j))%nprt) = i
-                  ELSE
-                        eq%sbp%box(eq%dat(i)%sbIDp(j))%c(1) = i
-                  END IF 
-            END IF
-            ENDDO
-            ENDIF  ! for initial iteration
+!                 Put particles in SBs
+                  idSBp = eq%dat(i)%sbIDp
+                  CALL eq%sbp%addprt(idSBp,i)
+            ENDIF  
 
 !           Reset other collisions
             IF(.not.ALLOCATED(eq%dat(i)%OthColl))
@@ -1643,15 +1679,15 @@
       ENDDO
 
       DO i = 1,eq%n
+      idSBp = eq%dat(i)%sbIDp
             DO j=1,2**nsd
-            IF ((eq%dat(i)%sbIDp(j).gt.0).and.
-     2 (eq%dat(i)%sbIDp(j).lt.eq%sbp%n(1)*eq%sbp%n(2)*eq%sbp%n(3))) THEN
-                  DO k=1,eq%sbp%box(eq%dat(i)%sbIDp(j))%nprt
-                        i2 = eq%sbp%box(eq%dat(i)%sbIDp(j))%c(k)        
-!     Check if the particle collides with any other particles during step. Then add to list if so
-               IF ((i.lt.i2) .and. .not.(eq%dat(i)%OthColl(i2))) THEN
-                        CALL eq%findcoll(i,i2,lM)
-               END IF
+            IF ((IDSBp(j).gt.0).and. (IDSBp(j).le.eq%sbp%nt)) THEN
+                  DO k=1,eq%sbp%box(IDSBp(j))%nprt
+                        i2 = eq%sbp%box(IDSBp(j))%c(k)        
+!                       Check if the particle collides with any other particles during step. Then add to list if so
+                        IF ((i.ne.i2) .and. 
+     2                   .not.(eq%dat(i)%OthColl(i2)))
+     3                    CALL eq%findcoll(i,i2,lM)
                   ENDDO
             END IF
             ENDDO
@@ -1663,7 +1699,22 @@
             citer = MINLOC(eq%collt, 1)
             i1 = eq%collpair(citer,1)
             i2 = eq%collpair(citer,2)
+
+!           Remove particles from sb before collision
+            idSBp = eq%dat(i1)%sbIDp
+            CALL eq%sbp%rmprt(idSBp,i1)
+            idSBp = eq%dat(i2)%sbIDp
+            CALL eq%sbp%rmprt(idSBp,i2)
+
+!           Enact collisions
             CALL eq%collide(i1,i2)
+
+!           Put particles into their new SBs
+            idSBp = eq%dat(i1)%sbIDp
+            CALL eq%sbp%addprt(idSBp,i1)
+            idSBp = eq%dat(i2)%sbIDp
+            CALL eq%sbp%addprt(idSBp,i2)
+
             eq%collt(citer) = dtp + 1
 !     Get rid of any previous collisions with these particles
             eq%collt(PACK(eq%collpair
@@ -1672,15 +1723,29 @@
      2 , eq%collpair .eq. i2)) = dtp + 1
             eq%dat(i1)%OthColl = .false.
             eq%dat(i2)%OthColl = .false.
-            DO i = 1,eq%n                 !! still loops over all other parts if collision occurs
-                                          !! to fix, remove these particles from sb, add to new ones
-                  IF((i.ne.i1).and.
-     2              .not.(eq%dat(i1)%OthColl(i)))
-     3 CALL eq%findcoll(i1,i,lM)
+            idSBp1 = eq%dat(i1)%sbIDp
+            idSBp2 = eq%dat(i2)%sbIDp
+            DO i = 1,2**nsd
 
-                  IF((i.ne.i2).and.
-     2              .not.(eq%dat(i2)%OthColl(i)))
-     3 CALL eq%findcoll(i2,i,lM)
+            IF ((IDSBp1(i).gt.0).and. (IDSBp1(i).le.eq%sbp%nt)) THEN
+                  DO k=1,eq%sbp%box(IDSBp1(j))%nprt
+                        i12 = eq%sbp%box(IDSBp1(i))%c(k)        
+!                       Check if the particle collides with any other particles after initial collision. Then add to list if so
+                        IF ((i1.ne.i12) .and. 
+     2                   .not.(eq%dat(i1)%OthColl(i12)))
+     3                   CALL eq%findcoll(i1,i12,lM)
+                  ENDDO
+            END IF
+
+            IF ((IDSBp2(i).gt.0).and. (IDSBp2(i).le.eq%sbp%nt)) THEN
+                  DO k=1,eq%sbp%box(IDSBp2(j))%nprt
+                        i22 = eq%sbp%box(IDSBp2(i))%c(k)        
+!                       Check if the particle collides with any other particles after initial collision. Then add to list if so
+                        IF ((i2.ne.i22) .and.
+     2                    .not.(eq%dat(i2)%OthColl(i22)))
+     3                    CALL eq%findcoll(i2,i2,lM)
+                  ENDDO
+            END IF
             ENDDO
       ENDDO
 

@@ -1,6 +1,5 @@
       MODULE PRTMOD
       USE INSMOD
-!     FSI is using PRTMOD
       IMPLICIT NONE
 
 !     Is used to initialize equation
@@ -230,6 +229,26 @@
 
 
       END SUBROUTINE bEvalPrt
+
+!---------------------------------------------------------------------
+      SUBROUTINE writePrt(s, fName)
+      IMPLICIT NONE
+      CLASS(prtType), INTENT(IN) :: s
+      CHARACTER(LEN=*), INTENT(IN) :: fName
+      CHARACTER(LEN=3), PARAMETER :: names(2) = (/'Tmp','dID'/)
+      INTEGER i, ip, l, fid, tN, pN, n
+      INTEGER(KIND=8) pos(2)
+      CHARACTER(LEN=stdL) hdr
+      TYPE(pRawType), POINTER :: p
+      TYPE(prtType) prt, tPrt
+      INTEGER, ALLOCATABLE :: lN(:)
+      REAL(KIND=8), ALLOCATABLE :: tmpX(:,:), tmpV(:,:), tmpT(:), 
+     2   tmpI(:)
+
+
+!     Work in progress... try looking at the dns one
+      RETURN
+      END SUBROUTINE writePrt
 !---------------------------------------------------------------------
       FUNCTION newPrt(dmn, lst, Uns,mns,twc,Pns) RESULT(eq)
       IMPLICIT NONE
@@ -283,7 +302,6 @@
 
       ALLOCATE(volt(eq%dmn%msh(1)%eNon))
       ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n),eq%wV(eq%dmn%msh(1)%nNo))
-      ALLOCATE(eq%collt(eq%n**2),eq%collpair(eq%n**2,2))
 
       eq%wV = 0D0
       DO i=1, eq%n
@@ -665,11 +683,13 @@
       SUBROUTINE addprtSBp(sb,IDSBp,ip)
       CLASS(sbpType), INTENT(INOUT):: sb
       INTEGER, INTENT(IN) :: IDSBp(2**nsd), ip
-      INTEGER :: i
+      INTEGER :: i, cnted(2**nsd)
       INTEGER, ALLOCATABLE :: tmpstck(:)
-      
+
+      cnted = 0
       DO i = 1,2**nsd
-            IF ((IDSBp(i).le.sb%nt).and. (IDSBp(i).gt.0)) THEN
+            IF ((IDSBp(i).le.sb%nt).and. (IDSBp(i).gt.0)
+     2       .and. .not.(ANY(IDSBp(i).eq.cnted))) THEN
 !     Increase number in box
                   sb%box(IDSBp(i))%nprt = sb%box(IDSBp(i))%nprt + 1
 !     Temporarily hold old searchbox values
@@ -687,6 +707,7 @@
                         sb%box(IDSBp(i))%c(1) = ip
                   END IF
             END IF
+            cnted(i) = IDSBp(i)
       ENDDO
 
       END SUBROUTINE addprtSBp
@@ -695,11 +716,13 @@
       SUBROUTINE rmprtSBp(sb,IDSBp,ip)
       CLASS(sbpType), INTENT(INOUT):: sb
       INTEGER, INTENT(IN) :: IDSBp(2**nsd), ip
-      INTEGER :: i
+      INTEGER :: i, cnted(2**nsd)
       INTEGER, ALLOCATABLE :: tmpstck(:)
       
+      cnted = 0
       DO i = 1,2**nsd
-            IF ((IDSBp(i).le.sb%nt) .and. (IDSBp(i).gt.0)) THEN
+            IF ((IDSBp(i).le.sb%nt) .and. (IDSBp(i).gt.0)
+     2       .and. .not.(ANY(cnted.eq.IDSBp(i)))) THEN
 !     Decrease number in box
                   sb%box(IDSBp(i))%nprt = sb%box(IDSBp(i))%nprt - 1
 !     Make array of box without particle
@@ -708,6 +731,7 @@
                   DEALLOCATE(sb%box(IDSBp(i))%c)
                   sb%box(IDSBp(i))%c = tmpstck
             END IF
+            cnted(i) = IDSBp(i)
       ENDDO
 
       END SUBROUTINE rmprtSBp
@@ -804,7 +828,7 @@
             N = msh%nAtx(p%x,xl)
 
             ! Checking if all shape functions are positive
-            IF (ALL(N.ge.-1.0D-7)) then
+            IF (ALL(N.ge.-1D-4)) then
                   p%eID=ind
                   p%N = N
                   EXIT
@@ -840,10 +864,12 @@
            !p%x(1) = 0D0
            !p%x(2) = 0D0
            !p%x(3) = 150D0/ip
-           !p%x(3) = 0.01D0
+           !p%x(3) = 0.3D0
            !if (ip.eq.2) p%x(3)=0.1D0
            p%sbIDp = prt%sbp%id(p%x)
            p%sbIDe = prt%sbe%id(p%x)
+!          Reset other collisions
+           IF(.not.ALLOCATED(p%OthColl)) ALLOCATE(p%OthColl(prt%n))
            prt%dat(ip) = p
            N = prt%shapef(ip,prt%dmn%msh(1))
       ENDDO
@@ -912,6 +938,7 @@
 !     Calculating distance coefficient
       REAL(KIND=8) :: a, b, c, d, e, f, qa, qb,qc,zeros(2),tcr,dp
       REAL(KIND=8) :: Np1(nsd+1), Np2(nsd+1)
+      REAL(KIND=8), ALLOCATABLE :: tmpcoll(:,:)
 
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
@@ -969,7 +996,7 @@
       p2%x = p2%xo
 
 !     OOB, no collisiion
-      IF (ANY(Np1.lt.-1D-7) .or. ANY(Np2.lt.-1D-7)) THEN
+      IF (ANY(Np1.lt.-1D-4) .or. ANY(Np2.lt.-1D-4)) THEN
             p1%sbIDe = prt%sbe%id(p1%x)
             p2%sbIDe = prt%sbe%id(p2%x)
             Np1 = prt%shapeF(id1, lM)
@@ -986,9 +1013,36 @@
       p2%ti = tcr                               !! just gets overwritten with mult collisions
 
       prt%collcnt = prt%collcnt+1
-      prt%collpair(prt%collcnt,:) = (/id1,id2/)
-      prt%collt(prt%collcnt) = tcr! + (dt) !something like this  !! This needs to account for particles that have collided already
+      ALLOCATE(tmpcoll(prt%collcnt,2))
+      tmpcoll(prt%collcnt,:) = (/id1,id2/)
+!     If collpair is allocated, this isn't the first collision to add
+      IF (ALLOCATED(prt%collpair)) THEN
+            tmpcoll(1:prt%collcnt-1,:) = prt%collpair
+            DEALLOCATE(prt%collpair)
+            ALLOCATE(prt%collpair(prt%collcnt,2))
+            prt%collpair = tmpcoll
+!     IF it's not allocated, this is the first collision detected
+      ELSE
+            ALLOCATE(prt%collpair(prt%collcnt,2))
+            prt%collpair = tmpcoll
+      END IF
 
+!     Same procedure for collt
+      tmpcoll(prt%collcnt,1) = tcr ! + (dt) !something like this  !! This needs to account for particles that have collided already
+      IF (ALLOCATED(prt%collt)) THEN
+            tmpcoll(1:prt%collcnt-1,1) = prt%collt
+            DEALLOCATE(prt%collt)
+            ALLOCATE(prt%collt(prt%collcnt))
+            prt%collt = tmpcoll(:,1)
+!     IF it's not allocated, this is the first collision detected
+      ELSE
+            ALLOCATE(prt%collt(prt%collcnt))
+            prt%collt = tmpcoll(:,1)
+      END IF
+
+      DEALLOCATE(tmpcoll)
+            
+      RETURN
       END SUBROUTINE findcollPrt
 
 !--------------------------------------------------------------------
@@ -1352,7 +1406,7 @@
 
 ! End NatxiEle
 
-            IF (ALL(N.ge.-1D-7).and. (tc.ge.-1D-7)
+            IF (ALL(N.ge.-1D-4).and. (tc.ge.-1D-4)
      2      .and. tc.lt.prt%dt) THEN
                   p%faID(1) = ii
                   p%faID(2) = b%fa(ii)%els(jj)
@@ -1426,7 +1480,7 @@
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
             rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
-            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi)) 
+            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi))*.99       !! silly hack b/c particles on edges get lost, should be fixed w/ periodic
 
             EXIT faloop
             END IF
@@ -1584,8 +1638,8 @@
       p%sbIDe = sbe%id(p%x)
       N = prt%shapeF(idp, msh)
 
-!     If so, DO a wall collision and continue on
-      IF (ANY(N .le. -1D-7)) THEN
+!     If so, do a wall collision and continue on
+      IF (ANY(N .le. -1D-4)) THEN
             p%x = p%xo
             p%sbIDe = tsbIDe
             p%sbIDp = tsbIDp
@@ -1610,7 +1664,8 @@
       TYPE(mshType), POINTER :: lM
       INTEGER, ALLOCATABLE :: tmpstck(:), N(:)
       REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
-     2 P1, P2, rhoF, umax(3) =0D0
+     2 P1, P2, rhoF, umax(3) =0D0, dmin(nsd), tic, toc
+      CHARACTER (LEN=stdl) fName
 
       lM => eq%dmn%msh(1)
       rhoP  = eq%mat%rho()
@@ -1635,7 +1690,6 @@
       subit = 1!FLOOR(dt/dtp)
       dtp = dt/subit
       eq%dt = dtp
-      eq%collt = dtp+1
 
       DO l = 1,subit
 
@@ -1644,8 +1698,9 @@
             DO i = 1, eq%n
                   umax = MAX(umax,ABS(eq%dat(i)%u))
             ENDDO
+            dmin = umax*dtp+dp
             CALL eq%sbp%free()
-            CALL eq%sbp%new(eq%dmn%msh(1), eq%n,umax*dtp+dp)
+            CALL eq%sbp%new(eq%dmn%msh(1), eq%n,dmin)
       END IF
 
       DO i=1,eq%n
@@ -1662,11 +1717,6 @@
                   CALL eq%sbp%addprt(idSBp,i)
             ENDIF  
 
-!           Reset other collisions
-            IF(.not.ALLOCATED(eq%dat(i)%OthColl))
-     2       ALLOCATE(eq%dat(i)%OthColl(eq%n))
-            eq%dat(i)%OthColl = .false.
-
 !     Set position and velocity to old variables in preparation for iteration with INS
             eq%dat(i)%x = eq%dat(i)%xo
             eq%dat(i)%u = eq%dat(i)%uo
@@ -1676,10 +1726,13 @@
 
 !     Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
+!     Reset collisions from last time step
+            eq%dat(i)%OthColl = .false.
       ENDDO
 
+      tic = CPUT()
       DO i = 1,eq%n
-      idSBp = eq%dat(i)%sbIDp
+            idSBp = eq%dat(i)%sbIDp
             DO j=1,2**nsd
             IF ((IDSBp(j).gt.0).and. (IDSBp(j).le.eq%sbp%nt)) THEN
                   DO k=1,eq%sbp%box(IDSBp(j))%nprt
@@ -1692,7 +1745,16 @@
             END IF
             ENDDO
       ENDDO
+      toc = CPUT()
+      toc = toc - tic
+      print *, toc
+      if (cm%mas()) then
+         open(123,file='speed_'//STR(eq%n)//'.txt',position='append')
+         write(123,*) toc
+         close(123)
+      end if 
 
+      IF (ALLOCATED(eq%collt)) THEN
 !     Keep looping over collisions, adding more as they appear, until there aren't any left
       DO WHILE(MINVAL(eq%collt).le.dtp)
 !     Enact collisions, starting with shortest time to collision, check for more collisions, add any you find in
@@ -1717,10 +1779,11 @@
 
             eq%collt(citer) = dtp + 1
 !     Get rid of any previous collisions with these particles
-            eq%collt(PACK(eq%collpair
-     2 , eq%collpair .eq. i1)) = dtp + 1
-            eq%collt(PACK(eq%collpair
-     2 , eq%collpair .eq. i2)) = dtp + 1
+            WHERE(eq%collpair(:,1).eq.i1) eq%collt = dtp + 1
+            WHERE(eq%collpair(:,2).eq.i1) eq%collt = dtp + 1
+            WHERE(eq%collpair(:,1).eq.i2) eq%collt = dtp + 1
+            WHERE(eq%collpair(:,2).eq.i2) eq%collt = dtp + 1
+
             eq%dat(i1)%OthColl = .false.
             eq%dat(i2)%OthColl = .false.
             idSBp1 = eq%dat(i1)%sbIDp
@@ -1728,7 +1791,7 @@
             DO i = 1,2**nsd
 
             IF ((IDSBp1(i).gt.0).and. (IDSBp1(i).le.eq%sbp%nt)) THEN
-                  DO k=1,eq%sbp%box(IDSBp1(j))%nprt
+                  DO k=1,eq%sbp%box(IDSBp1(i))%nprt
                         i12 = eq%sbp%box(IDSBp1(i))%c(k)        
 !                       Check if the particle collides with any other particles after initial collision. Then add to list if so
                         IF ((i1.ne.i12) .and. 
@@ -1738,21 +1801,27 @@
             END IF
 
             IF ((IDSBp2(i).gt.0).and. (IDSBp2(i).le.eq%sbp%nt)) THEN
-                  DO k=1,eq%sbp%box(IDSBp2(j))%nprt
+                  DO k=1,eq%sbp%box(IDSBp2(i))%nprt
                         i22 = eq%sbp%box(IDSBp2(i))%c(k)        
 !                       Check if the particle collides with any other particles after initial collision. Then add to list if so
                         IF ((i2.ne.i22) .and.
      2                    .not.(eq%dat(i2)%OthColl(i22)))
-     3                    CALL eq%findcoll(i2,i2,lM)
+     3                    CALL eq%findcoll(i2,i22,lM)
                   ENDDO
             END IF
             ENDDO
       ENDDO
+      ENDIF
+
+!     Reset collpair/collt
+      IF (ALLOCATED(eq%collpair)) DEALLOCATE(eq%collpair, eq%collt)
+
 
       DO i = 1,eq%n
+!           Now no particles will collide on their path. Safe to advance them 
             CALL eq%adv(i)
-            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
-     2            eq%dat(i)%u(3)
+!            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
+!     2            eq%dat(i)%u(3)
       ENDDO
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
@@ -1766,6 +1835,12 @@
 !     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
      6  ,P1,P2
       ENDDO
+
+!     Write particle data if it's a multiple of ten timestep
+      IF (mod(cTs,2).eq.0 .and. eq%itr.eq.0) THEN
+            fName = "prt_"//STR(cTs)//".vtk"
+            CALL writePrt(eq,fName)
+      ENDIF
 
 !     Updating norm for solution control
       CALL eq%upNorm(eq%ls%RI%iNorm)
@@ -1781,7 +1856,6 @@
 
       !! Urgent fixes:
       !! Combine wall into collisions matrix
-      !! Collisions still checks every other particle after it has already collided
       !! Mult collisions still need quite a bit of work to keep time consistent (if remdt1 .ne. remdt2)
       !! Don't have it implemented so it can hit multiple walls
       !! Make sbs not order NB^1/3

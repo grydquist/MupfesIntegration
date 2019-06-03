@@ -14,7 +14,6 @@
       USE INSMOD
       USE SVKMOD
       USE LEDMOD
-      USE PRTMOD
       IMPLICIT NONE
 
 !     Is used to initialize equation

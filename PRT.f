@@ -121,7 +121,7 @@
 !     Time until collision
          REAL(KIND=8) :: ti
 !     Other particles this particle has collided with
-         LOGICAL, ALLOCATABLE :: OthColl(:)
+         INTEGER, ALLOCATABLE :: OthColl(:)
       END TYPE pRawType
 
 !     Collection of particles
@@ -330,7 +330,6 @@
       SUBROUTINE newSbe(sb,msh)
       CLASS(mshType), INTENT(IN) :: msh
       CLASS(sbeType), INTENT(INOUT):: sb
-      TYPE(boxelType) :: tmpbox
       INTEGER :: ii,jj,cnt2,kk, iSb, xsteps(nsd)
      2  , xstepst(nsd,2), iSBmin, SBt,cx,cy,cz
       INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
@@ -464,18 +463,7 @@
 
 !                 If this isn't the first element going in the box
                   IF (ALLOCATED(sb%box(iSb)%els))THEN
-
-                        ALLOCATE(tmpbox%els(
-     2            size(sb%box(iSb)%els)+1))
-                        tmpbox%els(1:size(sb%box(iSb)%els))
-     2            = sb%box(iSb)%els
-                        DEALLOCATE(sb%box(iSb)%els)
-                        ALLOCATE(sb%box(iSb)%els(
-     2            size(tmpbox%els)))
-                        sb%box(iSb)%els = tmpbox%els
-                        sb%box(iSb)%els(size(tmpbox%els)) =
-     2            ii
-                        DEALLOCATE(tmpbox%els)
+                        sb%box(iSb)%els = [sb%box(iSb)%els,ii]
 !                 If this is the first element in the box
                   ELSE
                         ALLOCATE(sb%box(iSb)%els(1))
@@ -553,18 +541,8 @@
 
 !                 If this isn't the first element going in the box
                   IF (ALLOCATED(sb%box(iSb)%fa(ii)%els))THEN
-
-                        ALLOCATE(tmpbox%els(
-     2            size(sb%box(iSb)%fa(ii)%els)+1))
-                        tmpbox%els(1:size(sb%box(iSb)%fa(ii)%els))
-     2            = sb%box(iSb)%fa(ii)%els
-                        DEALLOCATE(sb%box(iSb)%fa(ii)%els)
-                        ALLOCATE(sb%box(iSb)%fa(ii)%els(
-     2            size(tmpbox%els)))
-                        sb%box(iSb)%fa(ii)%els = tmpbox%els
-                        sb%box(iSb)%fa(ii)%els(size(tmpbox%els)) =
-     2            jj
-                        DEALLOCATE(tmpbox%els)
+                        sb%box(iSb)%fa(ii)%els =
+     2                   [sb%box(iSb)%fa(ii)%els,jj]
 !                 If this is the first element in the box
                   ELSE
                         ALLOCATE(sb%box(iSb)%fa(ii)%els(1))
@@ -684,7 +662,6 @@
       CLASS(sbpType), INTENT(INOUT):: sb
       INTEGER, INTENT(IN) :: IDSBp(2**nsd), ip
       INTEGER :: i, cnted(2**nsd)
-      INTEGER, ALLOCATABLE :: tmpstck(:)
 
       cnted = 0
       DO i = 1,2**nsd
@@ -692,17 +669,11 @@
      2       .and. .not.(ANY(IDSBp(i).eq.cnted))) THEN
 !     Increase number in box
                   sb%box(IDSBp(i))%nprt = sb%box(IDSBp(i))%nprt + 1
-!     Temporarily hold old searchbox values
-                  tmpstck = sb%box(IDSBp(i))%c
-                  DEALLOCATE(sb%box(IDSBp(i))%c)
-!     Increase size of container by 1
-                  ALLOCATE(sb%box(IDSBp(i))%c(sb%box(IDSBp(i))%nprt))
+
 !     Add to end (a little different if it's the first element)
                   IF (sb%box(IDSBp(i))%nprt.ne.1) THEN
-                        sb%box(IDSBp(i))%c
-     2                   (1:sb%box(IDSBp(i))%nprt-1)=tmpstck
-                        sb%box(IDSBp(i))%c
-     2                   (sb%box(IDSBp(i))%nprt) = ip
+                        sb%box(IDSBp(i))%c =
+     2                  [sb%box(IDSBp(i))%c,ip] 
                   ELSE
                         sb%box(IDSBp(i))%c(1) = ip
                   END IF
@@ -831,7 +802,7 @@
             IF (ALL(N.ge.-1D-4)) then
                   p%eID=ind
                   p%N = N
-                  EXIT
+                  RETURN
             END IF
          
       ENDDO
@@ -866,10 +837,12 @@
            !p%x(3) = 150D0/ip
            !p%x(3) = 0.3D0
            !if (ip.eq.2) p%x(3)=0.1D0
+           !if (mod(ip,2).eq.0) p%x(3) = 150/ip
+           !if (mod(ip,2).eq.1) p%x(3) = 150/(ip+1)+.2D0
            p%sbIDp = prt%sbp%id(p%x)
            p%sbIDe = prt%sbe%id(p%x)
 !          Reset other collisions
-           IF(.not.ALLOCATED(p%OthColl)) ALLOCATE(p%OthColl(prt%n))
+           IF(.not.ALLOCATED(p%OthColl)) ALLOCATE(p%OthColl(0))
            prt%dat(ip) = p
            N = prt%shapef(ip,prt%dmn%msh(1))
       ENDDO
@@ -938,14 +911,14 @@
 !     Calculating distance coefficient
       REAL(KIND=8) :: a, b, c, d, e, f, qa, qb,qc,zeros(2),tcr,dp
       REAL(KIND=8) :: Np1(nsd+1), Np2(nsd+1)
-      REAL(KIND=8), ALLOCATABLE :: tmpcoll(:,:)
+      INTEGER, ALLOCATABLE :: tmpcoll(:,:)
 
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
       dp  = prt%mat%D()
 
-      p1%OthColl(id2) = .true.
-      p2%OthColl(id1) = .true.
+      p1%OthColl = [p1%OthColl,id2]
+      p2%OthColl = [p2%OthColl,id1]
 
 !     First, check if particles will collide at current trajectory
       a = p1%x(1) - p2%x(1)
@@ -1013,35 +986,33 @@
       p2%ti = tcr                               !! just gets overwritten with mult collisions
 
       prt%collcnt = prt%collcnt+1
-      ALLOCATE(tmpcoll(prt%collcnt,2))
-      tmpcoll(prt%collcnt,:) = (/id1,id2/)
 !     If collpair is allocated, this isn't the first collision to add
       IF (ALLOCATED(prt%collpair)) THEN
-            tmpcoll(1:prt%collcnt-1,:) = prt%collpair
+            ALLOCATE(tmpcoll(prt%collcnt,2))
+            tmpcoll(1:prt%collcnt-1,1) = prt%collpair(1:prt%collcnt-1,1)
+            tmpcoll(1:prt%collcnt-1,2) = prt%collpair(1:prt%collcnt-1,2)
+            tmpcoll(prt%collcnt,1) = id1
+            tmpcoll(prt%collcnt,2) = id2
             DEALLOCATE(prt%collpair)
             ALLOCATE(prt%collpair(prt%collcnt,2))
             prt%collpair = tmpcoll
+            DEALLOCATE(tmpcoll)
 !     IF it's not allocated, this is the first collision detected
       ELSE
             ALLOCATE(prt%collpair(prt%collcnt,2))
-            prt%collpair = tmpcoll
+            prt%collpair(1,1) = id1
+            prt%collpair(1,2) = id2
       END IF
 
 !     Same procedure for collt
-      tmpcoll(prt%collcnt,1) = tcr ! + (dt) !something like this  !! This needs to account for particles that have collided already
       IF (ALLOCATED(prt%collt)) THEN
-            tmpcoll(1:prt%collcnt-1,1) = prt%collt
-            DEALLOCATE(prt%collt)
-            ALLOCATE(prt%collt(prt%collcnt))
-            prt%collt = tmpcoll(:,1)
+            prt%collt = [prt%collt,tcr]! + (dt) !something like this  !! This needs to account for particles that have collided already
 !     IF it's not allocated, this is the first collision detected
       ELSE
             ALLOCATE(prt%collt(prt%collcnt))
-            prt%collt = tmpcoll(:,1)
+            prt%collt = tcr
       END IF
 
-      DEALLOCATE(tmpcoll)
-            
       RETURN
       END SUBROUTINE findcollPrt
 
@@ -1416,6 +1387,7 @@
 
       ENDDO
       ENDDO faceloop
+      print *, p%N, p%x, p%u, p%sbIDe, idp
       io%e = "Wrong searchbox"
       
       END SUBROUTINE findwlPrt
@@ -1443,9 +1415,9 @@
 
 !     Send drag to fluid
       DO jj=1,msh%eNoN
-            Ac = prt%dmn%msh(1)%IEN(jj,p%eID)
+            Ac = msh%IEN(jj,p%eID)
             prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
-     2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
+     2      apd*mP/rhoF/prt%wV(Ac)*p%N(jj)
       ENDDO
 
 !     Advance to collision location
@@ -1560,6 +1532,8 @@
 !! Find where grav actually is? (maybe mat%body forces)
       g=0D0
       g(3)=-1D0/idp
+      !if (mod(idp,2).eq.0) g(3) =1D0
+      !if (mod(idp,2).eq.1) g(3) =-1D0
       !if (idp .eq.2) g(3) = 1D0
       !tmpprt = prt                  !! Expensive with more sb
       msh => prt%dmn%msh(1)
@@ -1727,7 +1701,8 @@
 !     Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
 !     Reset collisions from last time step
-            eq%dat(i)%OthColl = .false.
+            DEALLOCATE(eq%dat(i)%OthColl)
+            ALLOCATE  (eq%dat(i)%OthColl(0))
       ENDDO
 
       tic = CPUT()
@@ -1739,8 +1714,9 @@
                         i2 = eq%sbp%box(IDSBp(j))%c(k)        
 !                       Check if the particle collides with any other particles during step. Then add to list if so
                         IF ((i.ne.i2) .and. 
-     2                   .not.(eq%dat(i)%OthColl(i2)))
-     3                    CALL eq%findcoll(i,i2,lM)
+     2                   .not.ANY(eq%dat(i)%OthColl.eq.i2)) THEN
+                              CALL eq%findcoll(i,i2,lM)
+                        ENDIF
                   ENDDO
             END IF
             ENDDO
@@ -1784,8 +1760,11 @@
             WHERE(eq%collpair(:,1).eq.i2) eq%collt = dtp + 1
             WHERE(eq%collpair(:,2).eq.i2) eq%collt = dtp + 1
 
-            eq%dat(i1)%OthColl = .false.
-            eq%dat(i2)%OthColl = .false.
+            DEALLOCATE(eq%dat(i1)%OthColl)
+            ALLOCATE(  eq%dat(i1)%OthColl(0))
+            DEALLOCATE(eq%dat(i2)%OthColl)
+            ALLOCATE(  eq%dat(i2)%OthColl(0))
+
             idSBp1 = eq%dat(i1)%sbIDp
             idSBp2 = eq%dat(i2)%sbIDp
             DO i = 1,2**nsd
@@ -1795,7 +1774,7 @@
                         i12 = eq%sbp%box(IDSBp1(i))%c(k)        
 !                       Check if the particle collides with any other particles after initial collision. Then add to list if so
                         IF ((i1.ne.i12) .and. 
-     2                   .not.(eq%dat(i1)%OthColl(i12)))
+     2                   .not. ANY(eq%dat(i1)%OthColl.eq.i12))
      3                   CALL eq%findcoll(i1,i12,lM)
                   ENDDO
             END IF
@@ -1805,8 +1784,8 @@
                         i22 = eq%sbp%box(IDSBp2(i))%c(k)        
 !                       Check if the particle collides with any other particles after initial collision. Then add to list if so
                         IF ((i2.ne.i22) .and.
-     2                    .not.(eq%dat(i2)%OthColl(i22)))
-     3                    CALL eq%findcoll(i2,i22,lM)
+     2                   .not. ANY(eq%dat(i2)%OthColl.eq.i22))
+     3                   CALL eq%findcoll(i2,i22,lM)
                   ENDDO
             END IF
             ENDDO
@@ -1855,7 +1834,6 @@
 
 
       !! Urgent fixes:
-      !! Combine wall into collisions matrix
       !! Mult collisions still need quite a bit of work to keep time consistent (if remdt1 .ne. remdt2)
       !! Don't have it implemented so it can hit multiple walls
       !! Make sbs not order NB^1/3

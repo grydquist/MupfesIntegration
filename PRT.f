@@ -354,7 +354,7 @@
       order(:,2) = diff(order(:,1))
       order(:,2) = order(:,2)/order(1,2)
 
-!     Scaling to get approximately cubic SBs equal to approx number of particles
+!     Scaling to get approximately cubic SBs equal to much greater than # elements
       s = (10*msh%nEl/(order(2,2)*order(3,2)))**(1D0/3D0)
       
 !     First n estimate
@@ -778,7 +778,7 @@
       CLASS(prtType), INTENT(IN),TARGET :: prt
       INTEGER, INTENT(IN) :: ip
       TYPE(mshType), INTENT(IN) :: msh
-      REAL(KIND=8) :: N(msh%eNoN), xl(nsd,msh%eNoN)
+      REAL(KIND=8) :: N(msh%eNoN),xl(nsd,msh%eNoN),Nt(msh%eNoN)
       TYPE(pRawType), POINTER :: p
       TYPE(boxelType),  POINTER :: b
       INTEGER :: ii, ind
@@ -799,12 +799,23 @@
             N = msh%nAtx(p%x,xl)
 
             ! Checking if all shape functions are positive
-            IF (ALL(N.ge.-1D-4)) then
+            IF (ALL(N.ge.-5D-7)) then
                   p%eID=ind
                   p%N = N
                   RETURN
             END IF
+      ENDDO
          
+      ! Catch to see if Sb is the issue
+      DO ii = 1,msh%nEl
+            xl = msh%x(:,msh%IEN(:,ii))
+            Nt = msh%nAtx(p%x,xl)
+
+            ! Checking if all shape functions are positive
+            IF (ALL(Nt.ge.-5D-7)) then
+                  print *, ii, ip, p%sbIDe,Nt
+                  io%e = "SBe issue"
+            END IF
       ENDDO
 
       ! If it loops through everything and Doesn't yield a positive shape function,
@@ -969,7 +980,7 @@
       p2%x = p2%xo
 
 !     OOB, no collisiion
-      IF (ANY(Np1.lt.-1D-4) .or. ANY(Np2.lt.-1D-4)) THEN
+      IF (ANY(Np1.lt.-5D-7) .or. ANY(Np2.lt.-5D-7)) THEN
             p1%sbIDe = prt%sbe%id(p1%x)
             p2%sbIDe = prt%sbe%id(p2%x)
             Np1 = prt%shapeF(id1, lM)
@@ -1098,12 +1109,13 @@
       INTEGER :: ii, jj, a,gEl, faceNS(1,msh%fa(1)%eNoN), cnt,kk,ll
      2 , faceN(msh%fa(1)%eNoN),facev
       REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac,
-     2 xl(nsd,msh%eNoN)
+     2 xl(nsd,msh%eNoN), magud
 
       p => prt%dat(idp)
       b => prt%sbe%box(p%sbIDe)
 
       p%faID = 0
+      magud = SUM(p%u**2D0)**0.5D0
 
       faceloop: DO ii=1,msh%nFa
       DO jj=1,size(b%fa(ii)%els)
@@ -1377,7 +1389,7 @@
 
 ! End NatxiEle
 
-            IF (ALL(N.ge.-1D-4).and. (tc.ge.-1D-4)
+            IF (ALL(N.ge.-5D-7).and. (tc.ge.-5D-7*magud)
      2      .and. tc.lt.prt%dt) THEN
                   p%faID(1) = ii
                   p%faID(2) = b%fa(ii)%els(jj)
@@ -1613,7 +1625,7 @@
       N = prt%shapeF(idp, msh)
 
 !     If so, do a wall collision and continue on
-      IF (ANY(N .le. -1D-4)) THEN
+      IF (ANY(N .le. -5D-7)) THEN
             p%x = p%xo
             p%sbIDe = tsbIDe
             p%sbIDp = tsbIDp
@@ -1761,9 +1773,11 @@
             WHERE(eq%collpair(:,2).eq.i2) eq%collt = dtp + 1
 
             DEALLOCATE(eq%dat(i1)%OthColl)
-            ALLOCATE(  eq%dat(i1)%OthColl(0))
+            ALLOCATE(  eq%dat(i1)%OthColl(1))
+            eq%dat(i1)%OthColl(1) = i2
             DEALLOCATE(eq%dat(i2)%OthColl)
-            ALLOCATE(  eq%dat(i2)%OthColl(0))
+            ALLOCATE(  eq%dat(i2)%OthColl(1))
+            eq%dat(i2)%OthColl(1) = i1
 
             idSBp1 = eq%dat(i1)%sbIDp
             idSBp2 = eq%dat(i2)%sbIDp
@@ -1795,13 +1809,16 @@
 !     Reset collpair/collt
       IF (ALLOCATED(eq%collpair)) DEALLOCATE(eq%collpair, eq%collt)
 
-
+      tic = CPUT()
       DO i = 1,eq%n
 !           Now no particles will collide on their path. Safe to advance them 
             CALL eq%adv(i)
 !            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
 !     2            eq%dat(i)%u(3)
       ENDDO
+      toc = CPUT()
+      toc = toc - tic
+      print *, toc
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)

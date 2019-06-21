@@ -110,10 +110,6 @@
          REAL(KIND=8) :: xo(3) = 0D0
 !     Previous Velocity
          REAL(KIND=8) :: uo(3) = 0D0
-!     Position at collision
-         REAL(KIND=8) :: xc(3) = 0D0
-!     Velocity at collision
-         REAL(KIND=8) :: uc(3) = 0D0
 !     Shape functions in current element
          REAL(KIND=8), ALLOCATABLE :: N(:)
 !     Remaining time in timestep after collision
@@ -359,7 +355,7 @@
       
 !     First n estimate
       DO ii = 1,nsd
-            sb%n(order(ii,1)) = INT(s*order(ii,2))
+            sb%n(order(ii,1)) = MAX(INT(s*order(ii,2)),1)
       ENDDO
       
 !     Size of sb
@@ -424,9 +420,18 @@
             xzerot(3,:) = elvert(3,:) - sb%minx(3)
 
 !           Number of searchbox steps in x,y,and z for both extreme vertices
+!           Also, special exception for elvert = exactly max domain value
             xstepst(1,:) = FLOOR(xzerot(1,:)/sb%step(1))
+            IF(xstepst(1,1).eq.sb%n(1)) xstepst(1,1) = sb%n(1) - 1
+            IF(xstepst(1,2).eq.sb%n(1)) xstepst(1,2) = sb%n(1) - 1
+
             xstepst(2,:) = FLOOR(xzerot(2,:)/sb%step(2))
+            IF(xstepst(2,1).eq.sb%n(2)) xstepst(2,1) = sb%n(2) - 1
+            IF(xstepst(2,2).eq.sb%n(2)) xstepst(2,2) = sb%n(2) - 1
+
             xstepst(3,:) = FLOOR(xzerot(3,:)/sb%step(3))
+            IF(xstepst(3,1).eq.sb%n(3)) xstepst(3,1) = sb%n(3) - 1
+            IF(xstepst(3,2).eq.sb%n(3)) xstepst(3,2) = sb%n(3) - 1
 
 !           Difference between SB steps for extreme vertices
             xsteps = xstepst(:,2) - xstepst(:,1)
@@ -501,9 +506,18 @@
          
 !                 Find which searchbox the particle is in
 !                 Number of searchbox steps in x,y,and z for both extreme vertices
+!                 Also, special exception for elvert = exactly max domain value
                   xstepst(1,:) = FLOOR(xzerot(1,:)/sb%step(1))
+                  IF(xstepst(1,1).eq.sb%n(1)) xstepst(1,1) = sb%n(1) - 1
+                  IF(xstepst(1,2).eq.sb%n(1)) xstepst(1,2) = sb%n(1) - 1
+
                   xstepst(2,:) = FLOOR(xzerot(2,:)/sb%step(2))
+                  IF(xstepst(2,1).eq.sb%n(2)) xstepst(2,1) = sb%n(2) - 1
+                  IF(xstepst(2,2).eq.sb%n(2)) xstepst(2,2) = sb%n(2) - 1
+
                   xstepst(3,:) = FLOOR(xzerot(3,:)/sb%step(3))
+                  IF(xstepst(3,1).eq.sb%n(3)) xstepst(3,1) = sb%n(3) - 1
+                  IF(xstepst(3,2).eq.sb%n(3)) xstepst(3,2) = sb%n(3) - 1
          
 !                 Difference between SB steps for extreme vertices
                   xsteps = xstepst(:,2) - xstepst(:,1)
@@ -586,7 +600,7 @@
       step = step*MAX(s,1D0)
       
 !     Getting the number of boxes from this
-      sb%n = MAX(INT(diff/step),(/1,1,1/))
+      sb%n = MAX(INT(diff/step),(/1,1,1/))!(/5,5,38/)!
       
 !     Size of sb
       sb%step = diff/((sb%n + 1D0)/2D0)
@@ -675,7 +689,9 @@
                         sb%box(IDSBp(i))%c =
      2                  [sb%box(IDSBp(i))%c,ip] 
                   ELSE
-                        sb%box(IDSBp(i))%c(1) = ip
+                        DEALLOCATE(sb%box(IDSBp(i))%c)
+                        ALLOCATE(sb%box(IDSBp(i))%c(1))
+                        sb%box(IDSBp(i))%c = ip
                   END IF
             END IF
             cnted(i) = IDSBp(i)
@@ -700,6 +716,7 @@
                   tmpstck = PACK(sb%box(IDSBp(i))%c, 
      2                           sb%box(IDSBp(i))%c.ne.ip)  
                   DEALLOCATE(sb%box(IDSBp(i))%c)
+                  ALLOCATE(sb%box(IDSBp(i))%c(size(tmpstck)))
                   sb%box(IDSBp(i))%c = tmpstck
             END IF
             cnted(i) = IDSBp(i)
@@ -799,7 +816,7 @@
             N = msh%nAtx(p%x,xl)
 
             ! Checking if all shape functions are positive
-            IF (ALL(N.ge.-5D-7)) then
+            IF (ALL(N.ge.-1D-7)) then
                   p%eID=ind
                   p%N = N
                   RETURN
@@ -812,7 +829,7 @@
             Nt = msh%nAtx(p%x,xl)
 
             ! Checking if all shape functions are positive
-            IF (ALL(Nt.ge.-5D-7)) then
+            IF (ALL(Nt.ge.-1D-7)) then
                   print *, ii, ip, p%sbIDe,Nt
                   io%e = "SBe issue"
             END IF
@@ -841,8 +858,8 @@
            p%pID  = INT(ip,8)
            CALL RANDOM_NUMBER(p%x(:))
            IF (nsd .EQ. 2) p%x(3) = 0D0
-           p%x(3) = p%x(3)*15D0
-           p%x = (p%x - (/0.5D0,0.5D0,0D0/))*20D0
+           p%x(3) = p%x(3)*7.5D0
+           p%x = (p%x - (/0.5D0,0.5D0,0D0/))*40D0
            !p%x(1) = 0D0
            !p%x(2) = 0D0
            !p%x(3) = 150D0/ip
@@ -850,6 +867,7 @@
            !if (ip.eq.2) p%x(3)=0.1D0
            !if (mod(ip,2).eq.0) p%x(3) = 150/ip
            !if (mod(ip,2).eq.1) p%x(3) = 150/(ip+1)+.2D0
+           !if (ip.eq.3) p%x = (/0D0,0.11D0, 75.1001D0/)
            p%sbIDp = prt%sbp%id(p%x)
            p%sbIDe = prt%sbe%id(p%x)
 !          Reset other collisions
@@ -921,7 +939,7 @@
 
 !     Calculating distance coefficient
       REAL(KIND=8) :: a, b, c, d, e, f, qa, qb,qc,zeros(2),tcr,dp
-      REAL(KIND=8) :: Np1(nsd+1), Np2(nsd+1)
+      REAL(KIND=8) :: Np1(nsd+1), Np2(nsd+1), xt1(nsd),xt2(nsd)
       INTEGER, ALLOCATABLE :: tmpcoll(:,:)
 
       p1 => prt%dat(id1)
@@ -931,13 +949,17 @@
       p1%OthColl = [p1%OthColl,id2]
       p2%OthColl = [p2%OthColl,id1]
 
-!     First, check if particles will collide at current trajectory
-      a = p1%x(1) - p2%x(1)
+!     First, check if particles will collide at current trajectory,
+!     accounting for if the particle has already been advanced for collisions
+      a = p1%x(1) - p1%u(1)*(prt%dt - p1%remdt) 
+     2  -(p2%x(1) - p2%u(1)*(prt%dt - p2%remdt))
       b = p1%u(1) - p2%u(1)
-      c = p1%x(2) - p2%x(2)
+      c = p1%x(2) - p1%u(2)*(prt%dt - p1%remdt) 
+     2  -(p2%x(2) - p2%u(2)*(prt%dt - p2%remdt))
       d = p1%u(2) - p2%u(2)
       if(nsd.eq.3) then
-         e = p1%x(3) - p2%x(3)
+         e = p1%x(3) - p1%u(3)*(prt%dt - p1%remdt) 
+     2     -(p2%x(3) - p2%u(3)*(prt%dt - p2%remdt))
          f = p1%u(3) - p2%u(3)
       else
          e=0D0
@@ -963,12 +985,15 @@
       ! Exit function if collision won't occur during (remaining)timestep
       if ((tcr.gt.p1%remdt) .and. (tcr.gt.p2%remdt)) 
      2 RETURN
+      ! tcr must also occur after previous collisions with these particles
+      IF (tcr.lt.(prt%dt - p1%remdt).or.tcr.lt.(prt%dt - p2%remdt))
+     2 RETURN
 
       ! particle locations at point of collision
-      p1%xc = p1%u*tcr + p1%x
-      p2%xc = p2%u*tcr + p2%x
-      p1%x = p1%xc ! I change these just so I can use shapeF
-      p2%x = p2%xc ! I change them back below
+      xt1 = p1%x
+      xt2 = p2%x
+      p1%x = p1%u*tcr + p1%x - p1%u*(prt%dt-p1%remdt) ! I change these just so I can use shapeF
+      p2%x = p2%u*tcr + p2%x - p2%u*(prt%dt-p2%remdt) ! I change them back below
 
 !     Check if the particle is outside the domain
       p1%sbIDe = prt%sbe%id(p1%x)
@@ -976,25 +1001,21 @@
       Np1 = prt%shapeF(id1, lM)
       Np2 = prt%shapeF(id2, lM)
 
-      p1%x = p1%xo
-      p2%x = p2%xo
+!     Change location back
+      p1%x = xt1
+      p2%x = xt2
+      p1%sbIDe = prt%sbe%id(p1%x)
+      p2%sbIDe = prt%sbe%id(p2%x)
 
 !     OOB, no collisiion
-      IF (ANY(Np1.lt.-5D-7) .or. ANY(Np2.lt.-5D-7)) THEN
-            p1%sbIDe = prt%sbe%id(p1%x)
-            p2%sbIDe = prt%sbe%id(p2%x)
+      IF (ANY(Np1.lt.-1D-7) .or. ANY(Np2.lt.-1D-7)) THEN
             Np1 = prt%shapeF(id1, lM)
             Np2 = prt%shapeF(id2, lM)
             RETURN
       END IF
 
-      p1%sbIDe = prt%sbe%id(p1%x)
-      p2%sbIDe = prt%sbe%id(p2%x)
       Np1 = prt%shapeF(id1, lM)
       Np2 = prt%shapeF(id2, lM)
-
-      p1%ti = tcr
-      p2%ti = tcr                               !! just gets overwritten with mult collisions
 
       prt%collcnt = prt%collcnt+1
 !     If collpair is allocated, this isn't the first collision to add
@@ -1017,7 +1038,7 @@
 
 !     Same procedure for collt
       IF (ALLOCATED(prt%collt)) THEN
-            prt%collt = [prt%collt,tcr]! + (dt) !something like this  !! This needs to account for particles that have collided already
+            prt%collt = [prt%collt,tcr]
 !     IF it's not allocated, this is the first collision detected
       ELSE
             ALLOCATE(prt%collt(prt%collcnt))
@@ -1028,9 +1049,9 @@
       END SUBROUTINE findcollPrt
 
 !--------------------------------------------------------------------
-      SUBROUTINE collidePrt(prt,id1,id2)
+      SUBROUTINE collidePrt(prt,id1,id2,citer)
       CLASS(prtType), INTENT(IN), TARGET :: prt
-      INTEGER, INTENT(IN) :: id1, id2
+      INTEGER, INTENT(IN) :: citer, id1, id2
       TYPE(pRawType), POINTER :: p1,p2
       REAL(KIND=8), ALLOCATABLE :: N(:)
 
@@ -1046,12 +1067,12 @@
       k   = prt%mat%krest()
       mp = pi*rho/6D0*dp**3D0
 
-      ! Update location to collision location
-      p1%x = p1%xc
-      p2%x = p2%xc
+      ! Update location to collision location by first backtracking then advancing
+      p1%x = p1%x - p1%u*(prt%dt - p1%remdt - prt%collt(citer))
+      p2%x = p2%x - p2%u*(prt%dt - p2%remdt - prt%collt(citer))
 
       ! Vector parallel and pependicular to collision tangent line
-      n1 = (p1%xc - p2%xc)/((dp + dp)/2)
+      n1 = (p1%x - p2%x)/((dp + dp)/2)
       n2 = -n1
       temp = cross2(n1,p1%u)
       t1 = cross2(temp,n1)
@@ -1078,14 +1099,11 @@
 
       ! V here is split into just two velocities, so just add them as vector
 
-      p1%uc = vpar1*n1 + vperp1*t1
-      p2%uc = vpar2*n2 + vperp2*t2
+      p1%u = vpar1*n1 + vperp1*t1
+      p2%u = vpar2*n2 + vperp2*t2
 
-      p1%u = p1%uc
-      p2%u = p2%uc
-
-      p1%remdt = p1%remdt-p1%ti
-      p2%remdt = p2%remdt-p2%ti
+      p1%remdt = prt%dt - prt%collt(citer)
+      p2%remdt = prt%dt - prt%collt(citer)
 
 !     Update SB/element/shpfn info info of particles
       ALLOCATE(N(prt%dmn%msh(1)%eNoN))
@@ -1389,8 +1407,8 @@
 
 ! End NatxiEle
 
-            IF (ALL(N.ge.-5D-7).and. (tc.ge.-5D-7*magud)
-     2      .and. tc.lt.prt%dt) THEN
+            IF (ALL(N.ge.-1D-7).and. (tc.ge.-1D-7)
+     2      .and. tc.lt.p%remdt) THEN
                   p%faID(1) = ii
                   p%faID(2) = b%fa(ii)%els(jj)
                   p%ti = tc
@@ -1433,8 +1451,7 @@
       ENDDO
 
 !     Advance to collision location
-      p%xc = p%u*p%ti + p%x
-      p%x  = p%xc
+      p%x  = p%u*p%ti + p%x
       p%remdt = p%remdt - p%ti
 
       IF (faTyp(p%faID(1)) .EQ. 3) THEN
@@ -1546,6 +1563,7 @@
       g(3)=-1D0/idp
       !if (mod(idp,2).eq.0) g(3) =1D0
       !if (mod(idp,2).eq.1) g(3) =-1D0
+      !if (idp.eq.3) g= (/0,-1,0/)
       !if (idp .eq.2) g(3) = 1D0
       !tmpprt = prt                  !! Expensive with more sb
       msh => prt%dmn%msh(1)
@@ -1608,8 +1626,8 @@
       ENDDO
 
       IF (prt%itr .EQ. 0) THEN
-            tmpwr = apd
-            write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
+            !tmpwr = apd
+            !write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
             !print *, sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
             !mom =prt%dmn%msh(1)%integ(u%v, 3)
             !print *, mom
@@ -1625,7 +1643,7 @@
       N = prt%shapeF(idp, msh)
 
 !     If so, do a wall collision and continue on
-      IF (ANY(N .le. -5D-7)) THEN
+      IF (ANY(N .le. -1D-7)) THEN
             p%x = p%xo
             p%sbIDe = tsbIDe
             p%sbIDp = tsbIDp
@@ -1735,12 +1753,7 @@
       ENDDO
       toc = CPUT()
       toc = toc - tic
-      print *, toc
-      if (cm%mas()) then
-         open(123,file='speed_'//STR(eq%n)//'.txt',position='append')
-         write(123,*) toc
-         close(123)
-      end if 
+      !print *, toc
 
       IF (ALLOCATED(eq%collt)) THEN
 !     Keep looping over collisions, adding more as they appear, until there aren't any left
@@ -1757,7 +1770,7 @@
             CALL eq%sbp%rmprt(idSBp,i2)
 
 !           Enact collisions
-            CALL eq%collide(i1,i2)
+            CALL eq%collide(i1,i2,citer)
 
 !           Put particles into their new SBs
             idSBp = eq%dat(i1)%sbIDp
@@ -1818,7 +1831,12 @@
       ENDDO
       toc = CPUT()
       toc = toc - tic
-      print *, toc
+      !print *, toc
+      if (cm%mas()) then
+         open(123,file='adv_'//STR(eq%n)//'.txt',position='append')
+         write(123,*) toc
+         close(123)
+      end if 
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
@@ -1851,6 +1869,8 @@
 
 
       !! Urgent fixes:
-      !! Mult collisions still need quite a bit of work to keep time consistent (if remdt1 .ne. remdt2)
+      !! Doesn't check collisions after wall
       !! Don't have it implemented so it can hit multiple walls
       !! Make sbs not order NB^1/3
+      !! Get subits working for sure
+      !! Shapefprt should really be a subroutine

@@ -20,8 +20,6 @@
 
 !     Individual box (elements)
       TYPE boxelType
-!     Box dimensions (minx,maxx,miny,maxy,minz,maxz)
-            REAL(KIND=8) :: dim(6)
 !     Elements contained in searchbox
             INTEGER, ALLOCATABLE :: els(:)
 !     Face elements in searchbox (face and element)
@@ -30,8 +28,6 @@
 
 !     Individual box (particles)
       TYPE boxpType
-!     Box dimensions (minx,maxx,miny,maxy,minz,maxz)
-            REAL(KIND=8) :: dim(6)
 !     Total particles in box
             INTEGER :: nprt = 0
 !     IDs of particles in box
@@ -328,7 +324,6 @@
       CLASS(sbeType), INTENT(INOUT):: sb
       INTEGER :: ii,jj,cnt2,kk, iSb, xsteps(nsd)
      2  , xstepst(nsd,2), iSBmin, SBt,cx,cy,cz
-      INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
       REAL(KIND=8) :: diff(nsd),elvert(nsd,2),xzerot(nsd,2)
      2 , order(nsd,2), s,xzero(nsd)
       LOGICAL :: orderl(nsd)
@@ -360,47 +355,11 @@
       
 !     Size of sb
       sb%step = diff/sb%n
-
-!     Dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
       ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
 
-!     These sequences are just for allocating sbdim
-      ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
-     2   ,seq3(sb%n(2)*sb%n(1)))
-
-      seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
-      cnt2=0
-      DO ii=1,sb%n(1)*sb%n(3)
-            seq2(ii)=ii+cnt2*(sb%n(2)-1)*sb%n(1)
-            if (MOD(ii,sb%n(1)).eq.0) cnt2=cnt2+1
-      ENDDO
-      seq3=(/(ii, ii=0, sb%n(1)*sb%n(2)-1, 1)/)+1
-
-      ! Direction 1
-      DO ii=1,sb%n(1)
-         sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:))
-     2       + sb%step(1)*(ii-1)
-      ENDDO
-
-      ! Direction 2
-      DO ii=1,sb%n(2)
-         sb%box(seq2+(ii-1)*sb%n(1))%dim(3) = MINVAL(msh%x(2,:))
-     2       + sb%step(2)*(ii-1)
-      ENDDO
-
-      ! Direction 3
-      DO ii=1,sb%n(3)
-         sb%box(seq3+(ii-1)*sb%n(1)*sb%n(2))%dim(5)=
-     2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)
-      ENDDO
-
-      sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
-      sb%box%dim(4) = sb%box%dim(3) + sb%step(2)
-      sb%box%dim(6) = sb%box%dim(5) + sb%step(3)
-      sb%minx(1) = minval(sb%box(:)%dim(1))
-      sb%minx(2) = minval(sb%box(:)%dim(3))
-      sb%minx(3) = minval(sb%box(:)%dim(5))
-      
+      sb%minx(1) = minval(msh%x(1,:))
+      sb%minx(2) = minval(msh%x(2,:))
+      sb%minx(3) = minval(msh%x(3,:))
 
       ! Finding the sbs the box vertices are in
       DO ii=1,msh%Nel
@@ -578,9 +537,8 @@
       INTEGER, INTENT(IN) :: np
       REAL(KIND=8), INTENT(IN) :: dmin(nsd)
       CLASS(sbpType), INTENT(INOUT):: sb
-      INTEGER :: ii,cnt2, iSb(2**nsd),xsteps(2**nsd)
-      INTEGER, ALLOCATABLE :: seq1(:),seq2(:),seq3(:)
-      REAL(KIND=8) :: diff(nsd), xzero(nsd), step(nsd), s
+      INTEGER :: ii, iSb(2**nsd)
+      REAL(KIND=8) :: diff(nsd), step(nsd), s
 
       IF (sb%crtd) RETURN
 !     Smallest possible SB (diam + possible travel distance)
@@ -603,49 +561,14 @@
       sb%n = MAX(INT(diff/step),(/1,1,1/))!(/5,5,38/)!
       
 !     Size of sb
-      sb%step = diff/((sb%n + 1D0)/2D0)
+      sb%step = diff/sb%n!((sb%n + 1D0)/2D0)
       sb%nt = sb%n(1)*sb%n(2)*sb%n(3)
 
-      ! dim is the dimensions of each of the search boxes, with minx,maxx,miny,maxy,minz,maxz
       ALLOCATE(sb%box(sb%nt))
 
-      ! these sequences are just for allocating sbdim
-      ALLOCATE(seq1(sb%n(3)*sb%n(2)),seq2(sb%n(3)*sb%n(1))
-     2   ,seq3(sb%n(2)*sb%n(1)))
-
-      seq1=(/(ii, ii=0, sb%n(2)*sb%n(3)-1, 1)/)*sb%n(1)+1
-      cnt2=0
-      DO ii=1,sb%n(1)*sb%n(3)
-            seq2(ii)=ii+cnt2*(sb%n(2)-1)*sb%n(1)
-            if (MOD(ii,sb%n(1)).eq.0) cnt2=cnt2+1
-      ENDDO
-      seq3=(/(ii, ii=0, sb%n(1)*sb%n(2)-1, 1)/)+1
-
-      ! Allocating sb, such that they overlap by 50%
-      ! Direction 1
-      DO ii=1,sb%n(1)
-         sb%box(seq1+ii-1)%dim(1) = MINVAL(msh%x(1,:)) 
-     2       + sb%step(1)*(ii-1)/2
-      ENDDO
-
-      ! Direction 2
-      DO ii=1,sb%n(2)
-         sb%box(seq2+(ii-1)*sb%n(1))%dim(3) = MINVAL(msh%x(2,:))
-     2       + sb%step(2)*(ii-1)/2
-      ENDDO
-
-      ! Direction 3
-      DO ii=1,sb%n(3)
-         sb%box(seq3+(ii-1)*sb%n(1)*sb%n(2))%dim(5)=
-     2   MINVAL(msh%x(3,:)) + sb%step(3)*(ii-1)/2
-      ENDDO
-
-      sb%box%dim(2) = sb%box%dim(1) + sb%step(1)
-      sb%box%dim(4) = sb%box%dim(3) + sb%step(2)
-      sb%box%dim(6) = sb%box%dim(5) + sb%step(3)
-      sb%minx(1) = minval(sb%box(:)%dim(1))
-      sb%minx(2) = minval(sb%box(:)%dim(3))
-      sb%minx(3) = minval(sb%box(:)%dim(5))
+      sb%minx(1) = minval(msh%x(1,:))
+      sb%minx(2) = minval(msh%x(2,:))
+      sb%minx(3) = minval(msh%x(3,:))
 
 !     Allocate SB particles in box
       DO ii = 1,sb%nt
@@ -667,7 +590,6 @@
       DEALLOCATE(sb%box)
 
       sb%crtd = .FALSE.
-
 
       END SUBROUTINE freeSBp
 !-------------------------------------------------------------------- Particles
@@ -823,7 +745,7 @@
             END IF
       ENDDO
          
-      ! Catch to see if Sb is the issue
+      ! Catch to see if Sb is the issue !! Get rid of eventually?
       DO ii = 1,msh%nEl
             xl = msh%x(:,msh%IEN(:,ii))
             Nt = msh%nAtx(p%x,xl)
@@ -1125,7 +1047,7 @@
       REAL(KIND=8) :: Jac, xXi(nsd,nsd), Am(nsd,nsd), x1(nsd), tc
       REAL(KIND=8) :: N(msh%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
       INTEGER :: ii, jj, a,gEl, faceNS(1,msh%fa(1)%eNoN), cnt,kk,ll
-     2 , faceN(msh%fa(1)%eNoN),facev
+     2 , faceN(msh%fa(1)%eNoN),facev,litr
       REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac,
      2 xl(nsd,msh%eNoN), magud
 
@@ -1136,7 +1058,16 @@
       magud = SUM(p%u**2D0)**0.5D0
 
       faceloop: DO ii=1,msh%nFa
-      DO jj=1,size(b%fa(ii)%els)
+      litr = 0
+      jj = 0
+      DO WHILE(litr.eq.0)
+            IF (ALLOCATED(b%fa(ii)%els)) THEN
+                  jj = jj + 1
+            ELSE
+                  EXIT
+            END IF
+
+            IF (jj .eq. size(b%fa(ii)%els)) litr = 1
 !           First we need to find the volumetric element associated with the face, and get x's associated with that
             gEl = msh%fa(ii)%gE(b%fa(ii)%els(jj))
             xl = msh%x(:,msh%IEN(:,gEl))
@@ -1439,17 +1370,6 @@
       rhoF  = prt%mns%rho()
       mp = pi*rho/6D0*dp**3D0
 
-!     Get first order drag
-      apd = prt%drag(idp)
-      p%u = p%u + apd*p%ti
-
-!     Send drag to fluid
-      DO jj=1,msh%eNoN
-            Ac = msh%IEN(jj,p%eID)
-            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
-     2      apd*mP/rhoF/prt%wV(Ac)*p%N(jj)
-      ENDDO
-
 !     Advance to collision location
       p%x  = p%u*p%ti + p%x
       p%remdt = p%remdt - p%ti
@@ -1625,6 +1545,7 @@
 !     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
       ENDDO
 
+!     For checking if momentum in by particles = momentum gain in system
       IF (prt%itr .EQ. 0) THEN
             !tmpwr = apd
             !write(88,*) sqrt(tmpwr(1)**2+tmpwr(2)**2+tmpwr(3)**2)*mp
@@ -1736,23 +1657,27 @@
       ENDDO
 
       tic = CPUT()
-      DO i = 1,eq%n
-            idSBp = eq%dat(i)%sbIDp
-            DO j=1,2**nsd
-            IF ((IDSBp(j).gt.0).and. (IDSBp(j).le.eq%sbp%nt)) THEN
-                  DO k=1,eq%sbp%box(IDSBp(j))%nprt
-                        i2 = eq%sbp%box(IDSBp(j))%c(k)        
+
+      DO i = 1,eq%sbp%nt
+            DO j=1,eq%sbp%box(i)%nprt
+                  DO k=j+1,eq%sbp%box(i)%nprt
+                        i1 = eq%sbp%box(i)%c(j)
+                        i2 = eq%sbp%box(i)%c(k)        
 !                       Check if the particle collides with any other particles during step. Then add to list if so
-                        IF ((i.ne.i2) .and. 
-     2                   .not.ANY(eq%dat(i)%OthColl.eq.i2)) THEN
-                              CALL eq%findcoll(i,i2,lM)
+                        IF (.not.ANY(eq%dat(i1)%OthColl.eq.i2)) THEN
+                              CALL eq%findcoll(i1,i2,lM)
                         ENDIF
                   ENDDO
-            END IF
             ENDDO
       ENDDO
+
       toc = CPUT()
       toc = toc - tic
+      if (cm%mas()) then
+         open(123,file='speed_'//STR(eq%n)//'.txt',position='append')
+         write(123,*) toc
+         close(123)
+      end if 
       !print *, toc
 
       IF (ALLOCATED(eq%collt)) THEN
@@ -1832,11 +1757,6 @@
       toc = CPUT()
       toc = toc - tic
       !print *, toc
-      if (cm%mas()) then
-         open(123,file='adv_'//STR(eq%n)//'.txt',position='append')
-         write(123,*) toc
-         close(123)
-      end if 
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)

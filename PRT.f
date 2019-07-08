@@ -208,7 +208,7 @@
       REAL(KIND=8), INTENT(INOUT) :: lR(eq%ls%nU,eNoN), 
      2   lK(eq%ls%nU*eq%ls%nU,eNoN,eNoN)
 
-      ! this is just a placeholder for now
+!     this is just a placeholder for now
 
       END SUBROUTINE eval2Prt
 !---------------------------------------------------------------------
@@ -318,7 +318,7 @@
       CALL eq%seed()
 
       END SUBROUTINE setupPrt
-!-------------------------------------------------------------------- Elements
+!---------------------------------------------------------------Elements
       SUBROUTINE newSbe(sb,msh)
       CLASS(mshType), INTENT(IN) :: msh
       CLASS(sbeType), INTENT(INOUT):: sb
@@ -345,7 +345,8 @@
       order(:,2) = diff(order(:,1))
       order(:,2) = order(:,2)/order(1,2)
 
-!     Scaling to get approximately cubic SBs equal to much greater than # elements
+!     Scaling to get approximately cubic SBs equal
+!     to much greater than # elements
       s = (10*msh%nEl/(order(2,2)*order(3,2)))**(1D0/3D0)
       
 !     First n estimate
@@ -361,7 +362,7 @@
       sb%minx(2) = minval(msh%x(2,:))
       sb%minx(3) = minval(msh%x(3,:))
 
-      ! Finding the sbs the box vertices are in
+!     Finding the sbs the box vertices are in
       DO ii=1,msh%Nel
             elvert(1,1) = MINVAL(msh%x(1,msh%IEN(:,ii)))
             elvert(1,2) = MAXVAL(msh%x(1,msh%IEN(:,ii)))
@@ -378,8 +379,8 @@
             xzerot(2,:) = elvert(2,:) - sb%minx(2)
             xzerot(3,:) = elvert(3,:) - sb%minx(3)
 
-!           Number of searchbox steps in x,y,and z for both extreme vertices
-!           Also, special exception for elvert = exactly max domain value
+!           Number of sB steps in x,y,and z for both extreme vertices
+!           Also, special exception for elvert = exactly max domain val
             xstepst(1,:) = FLOOR(xzerot(1,:)/sb%step(1))
             IF(xstepst(1,1).eq.sb%n(1)) xstepst(1,1) = sb%n(1) - 1
             IF(xstepst(1,2).eq.sb%n(1)) xstepst(1,2) = sb%n(1) - 1
@@ -399,7 +400,7 @@
             iSBmin = xstepst(1,1) + sb%n(1)*xstepst(2,1) +
      2     sb%n(1)*sb%n(2)*xstepst(3,1) + 1
 
-!           Now with this range, we can find all the SBs the element is in
+!           Now with this range, we can find all SBs the element is in
 !           Total SBs this particle is in
             SBt = (xsteps(1)+1)*(xsteps(2)+1)*(xsteps(3)+1)
             cx = 0
@@ -408,7 +409,7 @@
 
 !           Loop over all SBs this element is in and add them
             DO jj = 1,SBt
-!                 First we need to find the current ID of the SB we're in
+!                 First we need to get the current ID of the SB we're in
                   iSB = iSBmin  + cx + cy*sb%n(1)
      2                          + cz*sb%n(1)*sb%n(2)
                   cx = cx + 1
@@ -464,8 +465,9 @@
                   xzerot(3,:) = elvert(3,:) - sb%minx(3)
          
 !                 Find which searchbox the particle is in
-!                 Number of searchbox steps in x,y,and z for both extreme vertices
-!                 Also, special exception for elvert = exactly max domain value
+!                 Number of searchbox steps in x,y,and z
+!                 for both extreme vertices
+!                 Also, exception for elvert = exactly max domain value
                   xstepst(1,:) = FLOOR(xzerot(1,:)/sb%step(1))
                   IF(xstepst(1,1).eq.sb%n(1)) xstepst(1,1) = sb%n(1) - 1
                   IF(xstepst(1,2).eq.sb%n(1)) xstepst(1,2) = sb%n(1) - 1
@@ -485,7 +487,7 @@
                   iSBmin = xstepst(1,1) + sb%n(1)*xstepst(2,1) +
      2                        sb%n(1)*sb%n(2)*xstepst(3,1) + 1
          
-!                 Now with this range, we can find all the SBs the element is in
+!                 With this range, we can get all SBs the element is in
 !                 Total SBs this particle is in
                   SBt = (xsteps(1)+1)*(xsteps(2)+1)*(xsteps(3)+1)
                   cx = 0
@@ -505,10 +507,10 @@
                         cz = cz + 1
                   END IF
 
-!                 Add element to sb (if sb exists/element hasn't been added)
+!                 Add el to sb (if sb exists/element hasn't been added)
                   IF ((iSb.gt.0)
      2    .and.(iSb.le.sb%n(1)*sb%n(2)*sb%n(3))) THEN
-!                 First we need to allocate the face structure of the sb...
+!                 First we need to allocate the face structure of the sb
                         IF(.not.ALLOCATED(sb%box(iSb)%fa))
      2                  ALLOCATE(sb%box(iSb)%fa(msh%nFa))             
 
@@ -531,7 +533,7 @@
       RETURN
       END SUBROUTINE newSbe
 
-!-------------------------------------------------------------------- Particles
+!--------------------------------------------------------------Particles
       SUBROUTINE newSbp(sb,msh,np,dmin)
       CLASS(mshType), INTENT(IN) :: msh
       INTEGER, INTENT(IN) :: np
@@ -580,7 +582,7 @@
 
       RETURN
       END SUBROUTINE newSbp
-!-------------------------------------------------------------------- Particles
+!--------------------------------------------------------------Particles
 !     Gets rid of SB
       SUBROUTINE freeSBp(sb)
       CLASS(sbpType), INTENT(INOUT):: sb
@@ -592,7 +594,7 @@
       sb%crtd = .FALSE.
 
       END SUBROUTINE freeSBp
-!-------------------------------------------------------------------- Particles
+!--------------------------------------------------------------Particles
 !     Put particles in SBs
       SUBROUTINE addprtSBp(sb,IDSBp,ip)
       CLASS(sbpType), INTENT(INOUT):: sb
@@ -620,7 +622,7 @@
       ENDDO
 
       END SUBROUTINE addprtSBp
-!-------------------------------------------------------------------- Particles
+!--------------------------------------------------------------Particles
 !     Put particles in SBs
       SUBROUTINE rmprtSBp(sb,IDSBp,ip)
       CLASS(sbpType), INTENT(INOUT):: sb
@@ -645,7 +647,7 @@
       ENDDO
 
       END SUBROUTINE rmprtSBp
-!-------------------------------------------------------------------- Elements
+!---------------------------------------------------------------Elements
 !     Returns the ID of the searchboxes that contains point x
       FUNCTION idSBe(sb,x) RESULT(iSb)
       IMPLICIT NONE
@@ -655,20 +657,20 @@
       REAL(KIND=8) :: xzero(nsd)
       INTEGER :: xsteps(nsd)
 
-      ! Set domain back to zero
+!     Set domain back to zero
       xzero(1) = x(1) - sb%minx(1)
       xzero(2) = x(2) - sb%minx(2)
       xzero(3) = x(3) - sb%minx(3)
 
-      ! Find which searchbox the particle is in
-      ! Number of searchbox steps in x,y,and z
+!     Find which searchbox the particle is in
+!     Number of searchbox steps in x,y,and z
       xsteps = FLOOR(xzero/sb%step)
-      ! Check OOB
+!     Check OOB
       IF (ANY(xsteps.ge.sb%n) .or. ANY(xsteps.lt.0)) THEN
             iSb = -1
             RETURN
       ENDIF
-      ! SB it's in
+!     SB it's in
       iSb = xsteps(1) + sb%n(1)*xsteps(2) +
      2   sb%n(1)*sb%n(2)*xsteps(3) + 1
 
@@ -684,23 +686,23 @@
       REAL(KIND=8) :: xzero(nsd)
       INTEGER :: xsteps(nsd)
 
-      ! Set domain back to zero
+!     Set domain back to zero
       xzero(1) = x(1) - sb%minx(1)
       xzero(2) = x(2) - sb%minx(2)
       xzero(3) = x(3) - sb%minx(3)
 
-      ! Find which searchbox the particle is in
-      ! Number of searchbox steps in x,y,and z
+!     Find which searchbox the particle is in
+!     Number of searchbox steps in x,y,and z
       xsteps = FLOOR(2*xzero/sb%step)
-      ! furthest searchbox in front
+!     Furthest searchbox in front
       iSb(1) = xsteps(1) + sb%n(1)*xsteps(2) +
      2   sb%n(1)*sb%n(2)*xsteps(3) + 1
-      ! previous sb in x
+!     Previous sb in x
       iSb(2) = iSb(1) - 1
-      ! previous sb's in y
+!     Previous sb's in y
       iSb(3) = iSb(1) - sb%n(1)
       iSb(4) = iSb(3) - 1
-      ! Next sb's in z (if available)
+!     Next sb's in z (if available)
       if (nsd.eq.3) then
          iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
          iSb(6) = iSb(5) - 1
@@ -711,7 +713,7 @@
       RETURN
       END FUNCTION idSBp
 !--------------------------------------------------------------------
-!     Finds the element ID the particle is in. Also returns shape functions
+!     Finds the element ID the particle is in and returns shape fns
       FUNCTION shapeFPrt(prt, ip, msh) RESULT(N)
       IMPLICIT NONE
       CLASS(prtType), INTENT(IN),TARGET :: prt
@@ -737,7 +739,7 @@
             xl = msh%x(:,msh%IEN(:,ind))
             N = msh%nAtx(p%x,xl)
 
-            ! Checking if all shape functions are positive
+!           Checking if all shape functions are positive
             IF (ALL(N.ge.-1D-7)) then
                   p%eID=ind
                   p%N = N
@@ -745,20 +747,20 @@
             END IF
       ENDDO
          
-      ! Catch to see if Sb is the issue !! Get rid of eventually?
+!     Catch to see if Sb is the issue !! Get rid of eventually?
       DO ii = 1,msh%nEl
             xl = msh%x(:,msh%IEN(:,ii))
             Nt = msh%nAtx(p%x,xl)
 
-            ! Checking if all shape functions are positive
+!           Checking if all shape functions are positive
             IF (ALL(Nt.ge.-1D-7)) then
                   print *, ii, ip, p%sbIDe,Nt
                   io%e = "SBe issue"
             END IF
       ENDDO
 
-      ! If it loops through everything and Doesn't yield a positive shape function,
-      ! the particle is outside the domain.
+!     If it loops through everything and Doesn't yield a positive shape 
+!     function, the particle is outside the domain.
       RETURN
       END FUNCTION shapeFPrt
 !--------------------------------------------------------------------
@@ -812,7 +814,7 @@
       REAL(KIND=8) :: apd(nsd), fvel(nsd), taup, rhoP, mu,dp
       INTEGER :: ii, jj
       TYPE(pRawType), POINTER :: p
-      ! Derived from flow
+!     Derived from flow
       REAL(KIND=8) :: fSN, magud, Rep, relvel(nsd), rhoF
 
       p => prt%dat(ip)
@@ -839,15 +841,15 @@
          ENDDO
       ENDDO
 
-      ! Relative velocity
+!     Relative velocity
       relvel = fvel - p%u
-      ! Relative velocity magnitude
+!     Relative velocity magnitude
       magud = SUM(relvel**2D0)**0.5D0
-      ! Reynolds Number
+!     Reynolds Number
       Rep = dp*magud*rhoF/mu
-      ! Schiller-Neumann (finite Re) correction
+!     Schiller-Neumann (finite Re) correction
       fSN = 1D0 !+ 0.15D0*Rep**0.687D0   !!
-      ! Stokes corrected drag force
+!     Stokes corrected drag force
       apD = fSN/taup*relvel
 
       END FUNCTION dragPrt
@@ -872,7 +874,7 @@
       p2%OthColl = [p2%OthColl,id1]
 
 !     First, check if particles will collide at current trajectory,
-!     accounting for if the particle has already been advanced for collisions
+!     accounting for if the particle has been advanced for collisions
       a = p1%x(1) - p1%u(1)*(prt%dt - p1%remdt) 
      2  -(p2%x(1) - p2%u(1)*(prt%dt - p2%remdt))
       b = p1%u(1) - p2%u(1)
@@ -895,27 +897,28 @@
 !     Imaginary zeros means particles won't collide
       if ((qb**2D0-4D0*qa*qc).lt.0) RETURN
 
-      ! Zeros are when the particle either enters or leaves vicinity of other particle
+!     Zeros are when the particle enters or exits vol of another part
       zeros(1) = (-qb + sqrt(qb**2D0-4D0*qa*qc))/(2D0*qa)
       zeros(2) = (-qb - sqrt(qb**2D0-4D0*qa*qc))/(2D0*qa)
 
-      ! Negative zeros mean the particle would collide previously in time
+!     Negative zeros mean the particle would collide previously in time
       if (ANY(zeros.le.0D0)) RETURN
 
       tcr = minval(zeros)
 
-      ! Exit function if collision won't occur during (remaining)timestep
+!     Exit function if collision won't occur during (remaining)timestep
       if ((tcr.gt.p1%remdt) .and. (tcr.gt.p2%remdt)) 
      2 RETURN
-      ! tcr must also occur after previous collisions with these particles
+!     tcr must also occur after previous collisions with these particles
       IF (tcr.lt.(prt%dt - p1%remdt).or.tcr.lt.(prt%dt - p2%remdt))
      2 RETURN
 
-      ! particle locations at point of collision
+!     particle locations at point of collision
       xt1 = p1%x
       xt2 = p2%x
-      p1%x = p1%u*tcr + p1%x - p1%u*(prt%dt-p1%remdt) ! I change these just so I can use shapeF
-      p2%x = p2%u*tcr + p2%x - p2%u*(prt%dt-p2%remdt) ! I change them back below
+!     I change these so I can use shapeF, but I change them back below
+      p1%x = p1%u*tcr + p1%x - p1%u*(prt%dt-p1%remdt) 
+      p2%x = p2%u*tcr + p2%x - p2%u*(prt%dt-p2%remdt)
 
 !     Check if the particle is outside the domain
       p1%sbIDe = prt%sbe%id(p1%x)
@@ -989,11 +992,11 @@
       k   = prt%mat%krest()
       mp = pi*rho/6D0*dp**3D0
 
-      ! Update location to collision location by first backtracking then advancing
+!     Update location to collision by backtracking then advancing
       p1%x = p1%x - p1%u*(prt%dt - p1%remdt - prt%collt(citer))
       p2%x = p2%x - p2%u*(prt%dt - p2%remdt - prt%collt(citer))
 
-      ! Vector parallel and pependicular to collision tangent line
+!     Vector parallel and pependicular to collision tangent line
       n1 = (p1%x - p2%x)/((dp + dp)/2)
       n2 = -n1
       temp = cross2(n1,p1%u)
@@ -1001,17 +1004,18 @@
       temp = cross2(n2,p2%u)
       t2 = cross2(temp,n2)
 
-      ! Rare case with no perpendicular velocity
+!     Rare case with no perpendicular velocity
       if (ANY(ISNAN(t1))) t1 = 0D0
       if (ANY(ISNAN(t2))) t2 = 0D0
       
-      ! Get precollision parallel and perpendicular velocities
+!     Get precollision parallel and perpendicular velocities
       vperp1 = sum(t1*p1%u)
       vpar1  = sum(n1*p1%u)
       vperp2 = sum(t2*p2%u)
       vpar2  = sum(n2*p2%u)
 
-      ! Note that perpendicular velocities DOn't change, so we only need to calculate parallel
+!     Note that perpendicular velocities don't change, 
+!     so we only need to calculate parallel
       pa = mp*vpar1 - mp*vpar2
       pb = (-vpar1 - vpar2)*k
 
@@ -1019,7 +1023,7 @@
       vpar1 = pb + vpar2
       vpar2 = -vpar2
 
-      ! V here is split into just two velocities, so just add them as vector
+!     V here is split into two velocities, so I can add them as vector
 
       p1%u = vpar1*n1 + vperp1*t1
       p2%u = vpar2*n2 + vperp2*t2
@@ -1068,10 +1072,12 @@
             END IF
 
             IF (jj .eq. size(b%fa(ii)%els)) litr = 1
-!           First we need to find the volumetric element associated with the face, and get x's associated with that
+!           First we need to find the volumetric element associated
+!           with the face, and get x's associated with that
             gEl = msh%fa(ii)%gE(b%fa(ii)%els(jj))
             xl = msh%x(:,msh%IEN(:,gEl))
-!           Next, we find which face of the volumetric element is the face element
+!           Next, we find which face of the volumetric element
+!           is the face element
             out: DO  kk= 1, msh%fa(ii)%eNoN
                   cnt = 1
                   DO ll = 1,msh%eNoN 
@@ -1099,7 +1105,7 @@
      2          xl(:,a) * msh%Nx(2,a,1)
                   xXi(:,3) = xXi(:,3) +
      2          xl(:,a) * msh%Nx(3,a,1)   
-!           Location of Gauss point (for Bm)
+!                 Location of Gauss point (for Bm)
                   x1 = x1 + msh%N(a,1)*xl(:,a)
             ENDDO
 
@@ -1129,10 +1135,12 @@
 !           Finding B = xi_1 - A*x_1
             Bm = msh%xi(:,1) - Bm
 
-!     Now, knowing the face, we have information about the value of one parent coordinate
-!     Which we can use to solve for tc. Then we can find the particle at point of collision 
-!     with the plane in which the wall face is in. This is the same concept as NAtx, except
-!     we're imposing the condition that xc will be on the same plane as the face we're checking
+!     Now, knowing the face, we have information about the value of one
+!     parent coordinate, which we can use to solve for tc. Then we can
+!     find the particle at point of collision with the plane in which
+!     the wall face is in. This is the same concept as NAtx, except
+!     we're imposing the condition that xc will be on the same plane as
+!     the face we're checking
 
 !     3D elements
       SELECT CASE(msh%eType)
@@ -1152,7 +1160,7 @@
 
       SELECT CASE(facev)
 
-      !     +y
+!          +y
             CASE(1)
       xi(2) = 1
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
@@ -1161,7 +1169,7 @@
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
 
-      !     +z
+!           +z
             CASE(2)
       xi(3) = 1
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
@@ -1170,7 +1178,7 @@
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
 
-      !     +x
+!           +x
             CASE(3)
       xi(1) = 1
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
@@ -1179,7 +1187,7 @@
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
 
-      !     -y
+!           -y
             CASE(4)
       xi(2) = -1
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
@@ -1188,7 +1196,7 @@
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
 
-      !     -z
+!           -z
             CASE(5)
       xi(3) = -1
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
@@ -1197,7 +1205,7 @@
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
 
-      !     -x
+!           -x
             CASE(6)
       xi(1) = -1
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
@@ -1250,7 +1258,7 @@
      2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
-      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)          
+      xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)    
 
             CASE(3)
             xi(2) = 0
@@ -1336,7 +1344,7 @@
          N(3) = (1D0 - xi(1))*(1D0 + xi(1))
       END SELECT
 
-! End NatxiEle
+!     End NatxiEle
 
             IF (ALL(N.ge.-1D-7).and. (tc.ge.-1D-7)
      2      .and. tc.lt.p%remdt) THEN
@@ -1377,7 +1385,7 @@
       IF (faTyp(p%faID(1)) .EQ. 3) THEN
 !     Hitting wall
 
-!     Get normal/tangent vector
+!           Get normal/tangent vector
             a = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
      2    msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
             b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
@@ -1385,11 +1393,11 @@
             nV = CROSS2(a,b)
             temp = CROSS2(nV,p%u)
             tV = CROSS2(temp,nV)
-      ! Rare case with no perpendicular velocity
+!          Rare case with no perpendicular velocity
             IF (ANY(ISNAN(tV))) tV = 0D0
             vperp = sum(tV*p%u)
             vpar  = sum(nV*p%u)*k
-      !     Change velocities to after collision
+!          Change velocities to after collision
             p%u = -vpar*nV +vperp*tV
 
       ELSE
@@ -1401,8 +1409,8 @@
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
             rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
-            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi))*.99       !! silly hack b/c particles on edges get lost, should be fixed w/ periodic
-
+!! silly hack b/c particles on edges get lost, will be fixed w/ periodic
+            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi))*.99       
             EXIT faloop
             END IF
       ENDDO faloop
@@ -1412,8 +1420,8 @@
       END SUBROUTINE wallPrt
 
 !--------------------------------------------------------------------
-      ! Finds the volume influenced by moving one node in one element,
-      ! for all nodes in that element
+!     Finds the volume influenced by moving one node in one element,
+!     for all nodes in that element
       FUNCTION effvolel(msh,e) RESULT(effvol)
       IMPLICIT NONE
       TYPE(mshtype), INTENT(IN) :: msh
@@ -1432,10 +1440,11 @@
       x = msh%x(:,Ac)      
 
       DO g = 1, msh%nG
-!     First, we want the Jacobian, which (if shpfns are linear) is the same for all gauss points
+!     First, we want the Jacobian, which (if shpfns are linear) is the 
+!     same for all gauss points
       IF (g.EQ.1 .OR. .NOT.msh%lShpF) CALL msh%dNdx(g,x,Nx,Jac)
             DO a = 1, msh%eNoN
-!           Numerically integrate to get volume of each node
+!                 Numerically integrate to get volume of each node
                   effvol(a) = effvol(a) + msh%N(a,g)*Jac*msh%w(g)
             ENDDO
       ENDDO
@@ -1443,8 +1452,8 @@
       END FUNCTION
 
 !--------------------------------------------------------------------
-      ! I use cross products a couple times above and didn't want to integrate the util one
-      ! Also normalizes to unit vector
+!     I use cross products a couple times above
+!     Also normalizes to unit vector
       FUNCTION cross2(v1,v2) RESULT(cross)
       IMPLICIT NONE
       REAL(KIND=8) :: cross(nsd)
@@ -1473,8 +1482,8 @@
      2   mu, mp, g(nsd), dp,
      3   rhoP, Ntmp(nsd+1), tt(4)
       REAL(KIND=8), ALLOCATABLE :: N(:)
-      REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd)
-      REAL(KIND=8) :: prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom
+      REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd),
+     2 prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom, xt(nsd)
       INTEGER :: a, Ac, i, tsbIDp(2**nsd),tsbIDe, teID
 
 !     Gravity
@@ -1494,6 +1503,7 @@
       tp => tmpprt%dat(1)
       u => prt%Uns
       !tmpprt%sb = sb                !! Expensive with more sb
+      xt = p%x
       rhoF  = prt%mns%rho()
       rhoP  = prt%mat%rho()
       mu    = prt%mns%mu()
@@ -1505,7 +1515,7 @@
 !     Total acceleration (just drag and buoyancy now)
       apT = apd + g*(1D0 - rhoF/rhoP)
 
-!!    For now, I'm just going to DO 1st order. It eases a lot of optimization stuff
+!!    For now, I'm going to do 1st order. It eases optimization stuff
 
 !!     2nd order advance (Heun's Method)
 !!     Predictor
@@ -1515,19 +1525,22 @@
 !      tp%x  = prtxpred
 !
 !!     Find which searchbox prediction is in
-!      tp%sbID = sb%id(tp%x)   !! For some reason this changes apT???? Does not make any sense to me at all
+!!!     For some reason this changes apT???? makes no sense to me
+!      tp%sbID = sb%id(tp%x)   
 !!     Get shape functions/element of prediction
 !      Ntmp = tmpprt%shapeF(1, msh)
 !!     Check if predictor OOB
 !      IF (ANY(Ntmp.le.-1D-7)) THEN
-!!     This should advance to the edge of the wall, and then change the velocitry, as well as giving remdt
+!!     This should advance to the edge of the wall, and then change the
+!!     velocity, as well as giving remdt
 !            CALL prt%findwl(idp,msh)
 !            CALL prt%wall(idp,msh)
 !            p%x = p%x + p%remdt*p%u
 !            p%wall = .TRUE.
 !            RETURN
 !      END IF
-!!     Total acceleration (just drag and buoyancy now) ! again, because above changes this for some reason !!
+!!     Total acceleration (just drag and buoyancy now)
+!      again, because above changes this for some reason !!      
 !      apT = apd + g*(1D0 - rhoF/rhoP)
 !
 !!     Get drag acceleration of predicted particle
@@ -1565,7 +1578,7 @@
 
 !     If so, do a wall collision and continue on
       IF (ANY(N .le. -1D-7)) THEN
-            p%x = p%xo
+            p%x = xt
             p%sbIDe = tsbIDe
             p%sbIDp = tsbIDp
             p%eID = teID
@@ -1629,7 +1642,7 @@
       END IF
 
       DO i=1,eq%n
-!     If it's the first iteration, update last velocity, position, info
+!           If the first iteration, update last velocity, position, info
             IF (eq%itr .EQ. 0) THEN
                   eq%dat(i)%xo = eq%dat(i)%x
                   eq%dat(i)%uo = eq%dat(i)%u
@@ -1642,16 +1655,17 @@
                   CALL eq%sbp%addprt(idSBp,i)
             ENDIF  
 
-!     Set position and velocity to old variables in preparation for iteration with INS
+!           Set position and velocity to old variables in preparation 
+!           for iteration with INS
             eq%dat(i)%x = eq%dat(i)%xo
             eq%dat(i)%u = eq%dat(i)%uo
             eq%dat(i)%eID = eq%dat(i)%eIDo
             eq%dat(i)%sbIDe = eq%dat(i)%sbIDeo
             eq%dat(i)%sbIDp = eq%dat(i)%sbIDpo
 
-!     Set initial advancing time step to solver time step
+!           Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
-!     Reset collisions from last time step
+!           Reset collisions from last time step
             DEALLOCATE(eq%dat(i)%OthColl)
             ALLOCATE  (eq%dat(i)%OthColl(0))
       ENDDO
@@ -1663,7 +1677,8 @@
                   DO k=j+1,eq%sbp%box(i)%nprt
                         i1 = eq%sbp%box(i)%c(j)
                         i2 = eq%sbp%box(i)%c(k)        
-!                       Check if the particle collides with any other particles during step. Then add to list if so
+!                       Check if the particle collides with any other 
+!                       particles during step. Add to list if so
                         IF (.not.ANY(eq%dat(i1)%OthColl.eq.i2)) THEN
                               CALL eq%findcoll(i1,i2,lM)
                         ENDIF
@@ -1681,9 +1696,11 @@
       !print *, toc
 
       IF (ALLOCATED(eq%collt)) THEN
-!     Keep looping over collisions, adding more as they appear, until there aren't any left
+!     Keep looping over collisions, adding more as they appear, 
+!     until there aren't any left
       DO WHILE(MINVAL(eq%collt).le.dtp)
-!     Enact collisions, starting with shortest time to collision, check for more collisions, add any you find in
+!           Enact collisions, starting with shortest time to collision, 
+!           check for more collisions, add any you find in
             citer = MINLOC(eq%collt, 1)
             i1 = eq%collpair(citer,1)
             i2 = eq%collpair(citer,2)
@@ -1704,7 +1721,7 @@
             CALL eq%sbp%addprt(idSBp,i2)
 
             eq%collt(citer) = dtp + 1
-!     Get rid of any previous collisions with these particles
+!           Get rid of any previous collisions with these particles
             WHERE(eq%collpair(:,1).eq.i1) eq%collt = dtp + 1
             WHERE(eq%collpair(:,2).eq.i1) eq%collt = dtp + 1
             WHERE(eq%collpair(:,1).eq.i2) eq%collt = dtp + 1
@@ -1724,7 +1741,8 @@
             IF ((IDSBp1(i).gt.0).and. (IDSBp1(i).le.eq%sbp%nt)) THEN
                   DO k=1,eq%sbp%box(IDSBp1(i))%nprt
                         i12 = eq%sbp%box(IDSBp1(i))%c(k)        
-!                       Check if the particle collides with any other particles after initial collision. Then add to list if so
+!                       Check if the particle collides with other parts
+!                       after initial collision. Add to list if so
                         IF ((i1.ne.i12) .and. 
      2                   .not. ANY(eq%dat(i1)%OthColl.eq.i12))
      3                   CALL eq%findcoll(i1,i12,lM)
@@ -1733,8 +1751,9 @@
 
             IF ((IDSBp2(i).gt.0).and. (IDSBp2(i).le.eq%sbp%nt)) THEN
                   DO k=1,eq%sbp%box(IDSBp2(i))%nprt
-                        i22 = eq%sbp%box(IDSBp2(i))%c(k)        
-!                       Check if the particle collides with any other particles after initial collision. Then add to list if so
+                        i22 = eq%sbp%box(IDSBp2(i))%c(k)         
+!                       Check if the particle collides with other parts
+!                       after initial collision. Add to list if so
                         IF ((i2.ne.i22) .and.
      2                   .not. ANY(eq%dat(i2)%OthColl.eq.i22))
      3                   CALL eq%findcoll(i2,i22,lM)
@@ -1749,7 +1768,7 @@
 
       tic = CPUT()
       DO i = 1,eq%n
-!           Now no particles will collide on their path. Safe to advance them 
+!           Now no particles will collide on their path. Safe to advance
             CALL eq%adv(i)
 !            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
 !     2            eq%dat(i)%u(3)

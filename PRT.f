@@ -322,11 +322,15 @@
       SUBROUTINE newSbe(sb,msh)
       CLASS(mshType), INTENT(IN) :: msh
       CLASS(sbeType), INTENT(INOUT):: sb
-      INTEGER :: ii,jj,cnt2,kk, iSb, xsteps(nsd)
-     2  , xstepst(nsd,2), iSBmin, SBt,cx,cy,cz
-      REAL(KIND=8) :: diff(nsd),elvert(nsd,2),xzerot(nsd,2)
-     2 , order(nsd,2), s,xzero(nsd)
-      LOGICAL :: orderl(nsd)
+      INTEGER :: i, j, k, l, iSb, xsteps(nsd)
+     2  , xstepst(nsd,2), iSBmin, SBt, cx, cy, cz, nt
+     3  , elsegs(msh%eNoN*(msh%eNoN-1)/2,2), faceplne, elnmfc
+      REAL(KIND=8) :: diff(nsd),elvert(nsd,2),xzerot(nsd,2),order(nsd,2)
+     2 , s,xzero(nsd), N(msh%eNoN), xl(nsd,msh%eNoN), sbx(nsd)
+     3 , sbxmin(nsd), elfcx(nsd,nsd), fnV(nsd), segpt(nsd,2), df(nsd) 
+     4 , d1, d2, d3, segV(nsd), ipt(nsd), sbsegs(nsd*2**(nsd-1),nsd,2)
+      LOGICAL :: orderl(nsd), inbox, fullacc
+      INTEGER, ALLOCATABLE :: tsegs1(:),tsegs2(:), elfcpts(:,:)
 
       IF (sb%crtd) RETURN
 
@@ -350,28 +354,90 @@
       s = (10*msh%nEl/(order(2,2)*order(3,2)))**(1D0/3D0)
       
 !     First n estimate
-      DO ii = 1,nsd
-            sb%n(order(ii,1)) = MAX(INT(s*order(ii,2)),1)
+      DO i = 1,nsd
+            sb%n(order(i,1)) = MAX(INT(s*order(i,2)),1)
       ENDDO
+
+!     Do we want to get the exact SBs in the elements?
+      fullacc = .true.
       
 !     Size of sb
       sb%step = diff/sb%n
-      ALLOCATE(sb%box(sb%n(1)*sb%n(2)*sb%n(3)))
+      nt = sb%n(1)*sb%n(2)*sb%n(3)
+      ALLOCATE(sb%box(nt))
 
       sb%minx(1) = minval(msh%x(1,:))
       sb%minx(2) = minval(msh%x(2,:))
       sb%minx(3) = minval(msh%x(3,:))
 
+!     Making an array of all possible line segments between the points
+!     in an element
+      DO i = 1,msh%eNoN-1
+            DO j = 1,msh%eNoN
+                  IF(j.gt.i) THEN
+                        tsegs1 = [tsegs1,i]
+                        tsegs2 = [tsegs2,j]
+                  END IF
+            ENDDO
+      ENDDO
+      elsegs(:,1) = tsegs1
+      elsegs(:,2) = tsegs2
+
+!     Making an array of all possible line segments of SB edges
+      sbsegs = 0
+      IF (nsd.eq.3) THEN
+            sbsegs(9:12,1,1) = 1
+            sbsegs((/4,5,7,9/),2,1) = 1
+            sbsegs((/6,7,8,12/),3,1) = 1
+            sbsegs((/2,5,7,8,9,10,11,12/),1,2) = 1
+            sbsegs((/1,4,5,6,7,9,10,12/),2,2) = 1
+            sbsegs((/3,4,6,7,8,9,11,12/),3,2) = 1
+      ELSE
+            sbsegs(3:4,1,1) = 1
+            sbsegs(2:3,2,1) = 1
+            sbsegs(2:3,1,2) = 1
+            sbsegs(1:2,2,2) = 1
+      END IF
+
+!     Constructing planes for each face of el
+      SELECT CASE(msh%eType)
+      CASE(eType_TET)
+!           Tet: 4 faces to check
+            elnmfc = 4
+            ALLOCATE(elfcpts(nsd,elnmfc))
+!           Points on face
+            elfcpts(:,1) = (/1,2,3/)
+            elfcpts(:,2) = (/1,2,4/)
+            elfcpts(:,3) = (/1,3,4/)
+            elfcpts(:,4) = (/2,3,4/)
+
+      CASE(eType_BRK)
+!           Brick: 6 faces to check
+            elnmfc = 6
+            ALLOCATE(elfcpts(nsd,elnmfc))
+!           Points on face
+            elfcpts(:,1) = (/1,2,3/)
+            elfcpts(:,2) = (/1,2,5/)
+            elfcpts(:,3) = (/1,4,5/)
+            elfcpts(:,4) = (/5,6,7/)
+            elfcpts(:,5) = (/3,4,7/)
+            elfcpts(:,6) = (/2,3,6/)
+
+      CASE DEFAULT
+         io%e = "Element type not supported yet"
+      END SELECT
+
 !     Finding the sbs the box vertices are in
-      DO ii=1,msh%Nel
-            elvert(1,1) = MINVAL(msh%x(1,msh%IEN(:,ii)))
-            elvert(1,2) = MAXVAL(msh%x(1,msh%IEN(:,ii)))
-            elvert(2,1) = MINVAL(msh%x(2,msh%IEN(:,ii)))
-            elvert(2,2) = MAXVAL(msh%x(2,msh%IEN(:,ii)))
+      DO i=1,msh%Nel
+            xl = msh%x(:,msh%IEN(:,i))
+            elvert(1,1) = MINVAL(xl(1,:))
+            elvert(1,2) = MAXVAL(xl(1,:))
+            elvert(2,1) = MINVAL(xl(2,:))
+            elvert(2,2) = MAXVAL(xl(2,:))
 
          IF (nsd.eq.3) THEN
-            elvert(3,1) = MINVAL(msh%x(3,msh%IEN(:,ii)))
-            elvert(3,2) = MAXVAL(msh%x(3,msh%IEN(:,ii)))
+            elvert(3,1) = MINVAL(xl(3,:))
+            elvert(3,2) = MAXVAL(xl(3,:))
          END IF
 
 !           Set domain back to zero
@@ -397,8 +463,9 @@
             xsteps = xstepst(:,2) - xstepst(:,1)
 
 !           Furthest back SB the element is in
-            iSBmin = xstepst(1,1) + sb%n(1)*xstepst(2,1) +
-     2     sb%n(1)*sb%n(2)*xstepst(3,1) + 1
+            iSBmin = xstepst(1,1) + sb%n(1)*xstepst(2,1)
+     2             +  sb%n(1)*sb%n(2)*xstepst(3,1) + 1
+            sbxmin = sb%minx + sb%step*xstepst(:,1)
 
 !           Now with this range, we can find all SBs the element is in
 !           Total SBs this particle is in
@@ -408,10 +475,210 @@
             cz = 0
 
 !           Loop over all SBs this element is in and add them
-            DO jj = 1,SBt
+            DO j = 1,SBt
 !                 First we need to get the current ID of the SB we're in
                   iSB = iSBmin  + cx + cy*sb%n(1)
      2                          + cz*sb%n(1)*sb%n(2)
+           
+!                 Check if box is in element, first by checking if box
+!                 vertices are in the element
+!                 If fullacc false, it'l just add all boxes w/o
+!                 checking for intersection. If true, it will check.
+                  inbox = .true.
+                  IF(fullacc) THEN
+                  inbox = .false.                  
+                  DO k = 1,2**nsd
+!                       x sb vertex
+                        
+                        IF (k.le.4) THEN
+                              sbx(1) = sbxmin(1) + sb%step(1)*cx
+                        ELSE
+                              sbx(1) = sbxmin(1) + sb%step(1)*(cx+1)
+                        END IF
+
+!                       y sb vertex
+                        IF (ANY(k.eq.(/1,2,5,6/))) THEN
+                              sbx(2) = sbxmin(2) + sb%step(2)*cy
+                        ELSE
+                              sbx(2) = sbxmin(2) + sb%step(2)*(cy+1)
+                        END IF
+
+!                       z sb vertex
+                        IF ((mod(k,2) .eq. 0.) .and. (nsd.eq.3)) THEN
+                              sbx(3) = sbxmin(3) + sb%step(3)*cz
+                        ELSEIF (nsd.eq.3) THEN
+                              sbx(3) = sbxmin(3) + sb%step(3)*(cz+1)
+                        ENDIF
+
+                        N = msh%nAtx(sbx,xl)
+
+!                       Check if vertex is in element
+                        IF(ALL(N .ge. -1D-7)) THEN
+                              inbox = .true.
+                              EXIT
+                        ENDIF
+                  ENDDO
+
+!                 Now check element vertices in box
+                  IF(.not. inbox) THEN
+                  DO k = 1,msh%eNoN
+                       IF((xl(1,k).ge.(sbxmin(1) + sb%step(1)* cx   ))
+     2               .and.(xl(1,k).le.(sbxmin(1) + sb%step(1)*(cx+1))) 
+     3               .and.(xl(2,k).ge.(sbxmin(2) + sb%step(2)* cy   ))
+     4               .and.(xl(2,k).le.(sbxmin(2) + sb%step(3)*(cy+1))))
+     5                  THEN
+                       IF (nsd.eq.2) THEN 
+                        inbox = .true.
+                        EXIT
+                   ELSEIF((xl(3,k).ge.(sbxmin(3) + sb%step(3)* cz   ))
+     2               .and.(xl(3,k).le.(sbxmin(3) + sb%step(3)*(cz+1))))
+     3                  THEN
+                        inbox = .true.    
+                        EXIT
+                        ENDIF
+                        ENDIF
+                  ENDDO
+                  ENDIF
+
+!                 Now check if an element edge runs through a box face
+                  IF ((nsd.eq.3) .and. .not. inbox) THEN
+                  DO k = 1,msh%eNoN*(msh%eNoN-1)/2
+                        IF (inbox) EXIT
+                        segpt(:,1) =  msh%x(:,msh%IEN(elsegs(k,1),i))
+                        segpt(:,2) =  msh%x(:,msh%IEN(elsegs(k,2),i))
+                        segV = segpt(:,1) - segpt(:,2)
+                        DO l =1,2*nsd
+                              IF(inbox) EXIT
+
+                              sbx(1) = sbxmin(1) + sb%step(1)*cx
+                              sbx(2) = sbxmin(2) + sb%step(2)*cy
+                              sbx(3) = sbxmin(3) + sb%step(3)*cz
+
+!                             Faces of SB to check
+                              SELECT CASE(l)
+                              CASE(1) ! -x
+                                    fnV = (/1,0,0/)
+                                    faceplne = 1
+                              CASE(2) ! +x
+                                    fnV = (/1,0,0/)
+                                    sbx(1) = sbx(1) +sb%step(1)
+                                    faceplne = 1
+                              CASE(3) ! -y
+                                    fnV = (/0,1,0/)
+                                    faceplne = 2
+                              CASE(4) ! +y
+                                    fnV = (/0,1,0/)
+                                    sbx(2) = sbx(2) +sb%step(2)
+                                    faceplne = 2
+                              CASE(5) ! -z
+                                    fnV = (/0,0,1/)
+                                    faceplne = 3
+                              CASE(6) ! +z
+                                    fnV = (/0,0,1/)
+                                    sbx(3) = sbx(3) +sb%step(3)
+                                    faceplne = 3
+                              END SELECT
+
+                              df = segpt(:,1) - sbx
+                              d1 = df(1)*fnV(1) + df(2)*fnV(2)
+     2                           + df(3)*fnV(3)
+                              d2 = segV(1)*fnV(1) + segV(2)*fnV(2)
+     2                           + segV(3)*fnV(3)
+!                             Parallel if d2 = 0
+                              IF (d2 .eq. 0) CYCLE
+                              d3 = d1/d2
+                              
+!                             Intersection pt of line w/ box face plane
+                              ipt = segpt(:,1) - segV*d3
+!                             Is this point within the segment?
+                              IF(d3.lt.0 .or. d3.gt.1) CYCLE
+!                             Is this point inside the box face?
+                              SELECT CASE(faceplne)
+                              CASE(1) ! x face
+                                IF((ipt(2).ge.sbx(2))              .and. 
+     2                             (ipt(2).le.sbx(2) + sb%step(2)) .and.
+     3                             (ipt(3).ge.sbx(3))              .and.
+     4                             (ipt(3).le.sbx(3) + sb%step(3))) 
+     5                              inbox = .true.
+                              CASE(2) ! y face
+                                IF((ipt(1).ge.sbx(1))              .and. 
+     2                             (ipt(1).le.sbx(1) + sb%step(1)) .and.
+     3                             (ipt(3).ge.sbx(3))              .and.
+     4                             (ipt(3).le.sbx(3) + sb%step(3))) 
+     5                              inbox = .true.
+                              CASE(3) ! z face
+                                IF((ipt(1).ge.sbx(1))              .and. 
+     2                             (ipt(1).le.sbx(1) + sb%step(1)) .and.
+     3                             (ipt(2).ge.sbx(2))              .and.
+     4                             (ipt(2).le.sbx(2) + sb%step(2))) 
+     5                              inbox = .true.
+                              END SELECT
+                        ENDDO
+                  ENDDO
+                  ENDIF
+
+!                 SB coords of furthest back vertex
+                  sbx(1) = sbxmin(1) + sb%step(1)*cx
+                  sbx(2) = sbxmin(2) + sb%step(2)*cy
+                  IF (nsd.eq.3) THEN
+                  sbx(3) = sbxmin(3) + sb%step(3)*cz
+                  ENDIF
+
+!                 Now check if a box edge runs through an element face
+                  IF ((nsd.eq.3) .and. .not. inbox) THEN
+!                       Loop through all the edges on the SB
+                        DO k = 1,nsd*2**(nsd-1)
+                              IF(inbox) EXIT
+!                             Constructing a line segment w/ faces of SB
+                              segpt(1,1) = sbx(1) 
+     2                                   + sbsegs(k,1,1)*sb%step(1)
+                              segpt(1,2) = sbx(1) 
+     2                                   + sbsegs(k,1,2)*sb%step(1)
+                              segpt(2,1) = sbx(2) 
+     2                                   + sbsegs(k,2,1)*sb%step(2)
+                              segpt(2,2) = sbx(2) 
+     2                                   + sbsegs(k,2,2)*sb%step(2)
+                              segpt(3,1) = sbx(3) 
+     2                                   + sbsegs(k,3,1)*sb%step(3)
+                              segpt(3,2) = sbx(3) 
+     2                                   + sbsegs(k,3,2)*sb%step(3)
+
+!                             Loop through all element faces
+                              DO l =1,elnmfc
+!                                   Location of face pts
+                                    elfcx = msh%x(:,
+     2                                      msh%IEN(elfcpts(:,l),i))
+!                                   Vector along segment points
+                                    segV = segpt(:,1) - segpt(:,2)
+!                                   Face normal vector
+                                    fnV = cross2(
+     2                                    (elfcx(:,2) - elfcx(:,1)),
+     3                                    (elfcx(:,3) - elfcx(:,1)))
+!                                   Now we can finally find ipt
+                                    df = segpt(:,1) - elfcx(:,1)
+                                    d1 = df(1)*fnV(1) + df(2)*fnV(2) 
+     2                                 + df(3)*fnV(3)
+                                    d2 = segV(1)*fnV(1) + segV(2)*fnV(2)
+     2                                 + segV(3)*fnV(3)
+!                                   Parallel if 0
+                                    IF (d2 .eq. 0) CYCLE
+                                    d3 = d1/d2
+!                                   Intersection pt
+                                    ipt = segpt(:,1) - segV*d3
+!                                   Within the segment?
+                                    IF(d3.lt.0 .or. d3.gt.1) CYCLE
+!                                   On element face?
+                                    N = msh%nAtx(ipt,xl)
+                                    IF (ALL(N.ge.-1D-7))THEN
+                                          inbox = .true.
+                                          EXIT
+                                    ENDIF
+                              ENDDO
+                        ENDDO
+                  ENDIF
+                  ENDIF
+
+!                 Update counter to go to next SB
                   cx = cx + 1
                   IF (cx .gt. xsteps(1)) THEN
                         cx = 0
@@ -422,41 +689,39 @@
                         cz = cz + 1
                   END IF
 
-!                 Add element to sb (if sb exists)
-                  IF ((iSb.gt.0)
-     2    .and.(iSb.le.sb%n(1)*sb%n(2)*sb%n(3))) THEN
-
-!                 If this isn't the first element going in the box
-                  IF (ALLOCATED(sb%box(iSb)%els))THEN
-                        sb%box(iSb)%els = [sb%box(iSb)%els,ii]
-!                 If this is the first element in the box
-                  ELSE
-                        ALLOCATE(sb%box(iSb)%els(1))
-                        sb%box(iSb)%els(1) = ii
-                  END IF
+!                 Add element to sb if sb exists and is in element
+                  IF ((iSB.gt.0) .and. (iSB.le.nt) .and. inbox) THEN
+!                       If this isn't the first element going in the box
+                        IF (ALLOCATED(sb%box(iSB)%els))THEN
+                              sb%box(iSB)%els = [sb%box(iSB)%els,i]
+!                       If this is the first element in the box
+                        ELSE
+                              ALLOCATE(sb%box(iSB)%els(1))
+                              sb%box(iSB)%els(1) = i
+                        END IF
                   END IF
             ENDDO
       ENDDO
 
-!     Same process as above, but for faces
-      DO ii = 1,msh%nFa
-            DO jj = 1,msh%fa(ii)%nEl
+!     Faces are just added directly without checking for intersection
+      DO i = 1,msh%nFa
+            DO j = 1,msh%fa(i)%nEl
 
                   elvert(1,1) = 
-     2             MINVAL(msh%x(1,msh%fa(ii)%IEN(:,jj)))
+     2             MINVAL(msh%x(1,msh%fa(i)%IEN(:,j)))
                   elvert(1,2) = 
-     2             MAXVAL(msh%x(1,msh%fa(ii)%IEN(:,jj)))
+     2             MAXVAL(msh%x(1,msh%fa(i)%IEN(:,j)))
          
                   elvert(2,1) = 
-     2             MINVAL(msh%x(2,msh%fa(ii)%IEN(:,jj)))
+     2             MINVAL(msh%x(2,msh%fa(i)%IEN(:,j)))
                   elvert(2,2) = 
-     2             MAXVAL(msh%x(2,msh%fa(ii)%IEN(:,jj)))
+     2             MAXVAL(msh%x(2,msh%fa(i)%IEN(:,j)))
          
                   IF (nsd.eq.3) THEN
                         elvert(3,1) = 
-     2             MINVAL(msh%x(3,msh%fa(ii)%IEN(:,jj)))
+     2             MINVAL(msh%x(3,msh%fa(i)%IEN(:,j)))
                         elvert(3,2) = 
-     2             MAXVAL(msh%x(3,msh%fa(ii)%IEN(:,jj)))
+     2             MAXVAL(msh%x(3,msh%fa(i)%IEN(:,j)))
                   END IF
          
 !                 Set domain back to zero
@@ -494,7 +759,7 @@
                   cy = 0
                   cz = 0
 
-            DO kk = 1,SBt
+            DO k = 1,SBt
                   iSB = iSBmin  + cx + cy*sb%n(1)
      2                          + cz*sb%n(1)*sb%n(2)
                   cx = cx + 1
@@ -508,20 +773,19 @@
                   END IF
 
 !                 Add el to sb (if sb exists/element hasn't been added)
-                  IF ((iSb.gt.0)
-     2    .and.(iSb.le.sb%n(1)*sb%n(2)*sb%n(3))) THEN
+                  IF ((iSB.gt.0).and.(iSB.le.nt)) THEN
 !                 First we need to allocate the face structure of the sb
-                        IF(.not.ALLOCATED(sb%box(iSb)%fa))
-     2                  ALLOCATE(sb%box(iSb)%fa(msh%nFa))             
+                        IF(.not.ALLOCATED(sb%box(iSB)%fa))
+     2                  ALLOCATE(sb%box(iSB)%fa(msh%nFa))             
 
 !                 If this isn't the first element going in the box
-                  IF (ALLOCATED(sb%box(iSb)%fa(ii)%els))THEN
-                        sb%box(iSb)%fa(ii)%els =
-     2                   [sb%box(iSb)%fa(ii)%els,jj]
+                  IF (ALLOCATED(sb%box(iSB)%fa(i)%els))THEN
+                        sb%box(iSB)%fa(i)%els =
+     2                   [sb%box(iSB)%fa(i)%els,j]
 !                 If this is the first element in the box
                   ELSE
-                        ALLOCATE(sb%box(iSb)%fa(ii)%els(1))
-                        sb%box(iSb)%fa(ii)%els = jj
+                        ALLOCATE(sb%box(iSB)%fa(i)%els(1))
+                        sb%box(iSB)%fa(i)%els = j
                   END IF
                   END IF 
             ENDDO       
@@ -539,7 +803,7 @@
       INTEGER, INTENT(IN) :: np
       REAL(KIND=8), INTENT(IN) :: dmin(nsd)
       CLASS(sbpType), INTENT(INOUT):: sb
-      INTEGER :: ii, iSb(2**nsd)
+      INTEGER :: i
       REAL(KIND=8) :: diff(nsd), step(nsd), s
 
       IF (sb%crtd) RETURN
@@ -562,7 +826,7 @@
 !     Getting the number of boxes from this
       sb%n = MAX(INT(diff/step),(/1,1,1/))!(/5,5,38/)!
       
-!     Size of sb
+!     Half-size of sb
       sb%step = diff/sb%n!((sb%n + 1D0)/2D0)
       sb%nt = sb%n(1)*sb%n(2)*sb%n(3)
 
@@ -573,8 +837,8 @@
       sb%minx(3) = minval(msh%x(3,:))
 
 !     Allocate SB particles in box
-      DO ii = 1,sb%nt
-            ALLOCATE(sb%box(ii)%c(1))
+      DO i = 1,sb%nt
+            ALLOCATE(sb%box(i)%c(1))
       ENDDO
       sb%box(:)%nprt = 0
 
@@ -722,18 +986,18 @@
       REAL(KIND=8) :: N(msh%eNoN),xl(nsd,msh%eNoN),Nt(msh%eNoN)
       TYPE(pRawType), POINTER :: p
       TYPE(boxelType),  POINTER :: b
-      INTEGER :: ii, ind
+      INTEGER :: i, ind
 
       N= -1D0
       p => prt%dat(ip)
       IF (p%sbIDe .eq. -1) RETURN
       b => prt%sbe%box(p%sbIDe)
-      DO ii=1,size(b%els)+1
+      DO i=1,size(b%els)+1
 
-            IF (ii.eq.1) THEN
+            IF (i.eq.1) THEN
                   ind = p%eIDo
             ELSE
-                  ind = b%els(ii-1)
+                  ind = b%els(i-1)
             END IF
 
             xl = msh%x(:,msh%IEN(:,ind))
@@ -748,18 +1012,20 @@
       ENDDO
          
 !     Catch to see if Sb is the issue !! Get rid of eventually?
-      DO ii = 1,msh%nEl
-            xl = msh%x(:,msh%IEN(:,ii))
+      DO i = 1,msh%nEl
+            xl = msh%x(:,msh%IEN(:,i))
             Nt = msh%nAtx(p%x,xl)
 
 !           Checking if all shape functions are positive
             IF (ALL(Nt.ge.-1D-7)) then
-                  print *, ii, ip, p%sbIDe,Nt
+                  print *, i, ip, p%sbIDe,Nt, p%x
+                  print *, size(b%els)
+                  print *, b%els
                   io%e = "SBe issue"
             END IF
       ENDDO
 
-!     If it loops through everything and Doesn't yield a positive shape 
+!     If it loops through everything and doesn't yield a positive shape 
 !     function, the particle is outside the domain.
       RETURN
       END FUNCTION shapeFPrt
@@ -784,6 +1050,7 @@
            IF (nsd .EQ. 2) p%x(3) = 0D0
            p%x(3) = p%x(3)*7.5D0
            p%x = (p%x - (/0.5D0,0.5D0,0D0/))*40D0
+           p%x = p%x/2
            !p%x(1) = 0D0
            !p%x(2) = 0D0
            !p%x(3) = 150D0/ip
@@ -812,7 +1079,7 @@
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       REAL(KIND=8) :: apd(nsd), fvel(nsd), taup, rhoP, mu,dp
-      INTEGER :: ii, jj
+      INTEGER :: i, j
       TYPE(pRawType), POINTER :: p
 !     Derived from flow
       REAL(KIND=8) :: fSN, magud, Rep, relvel(nsd), rhoF
@@ -835,9 +1102,9 @@
 
       IF(.not. ALLOCATED(p%N))
      2 ALLOCATE(p%N(msh%eNoN)) 
-      DO ii=1,nsd
-         DO jj=1,msh%eNoN
-            fvel(ii) = fvel(ii) + u%v(ii,msh%IEN(jj,p%eID))*p%N(jj)
+      DO i=1,nsd
+         DO j=1,msh%eNoN
+            fvel(i) = fvel(i) + u%v(i,msh%IEN(j,p%eID))*p%N(j)
          ENDDO
       ENDDO
 
@@ -1050,7 +1317,7 @@
       TYPE(boxelType),  POINTER :: b
       REAL(KIND=8) :: Jac, xXi(nsd,nsd), Am(nsd,nsd), x1(nsd), tc
       REAL(KIND=8) :: N(msh%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
-      INTEGER :: ii, jj, a,gEl, faceNS(1,msh%fa(1)%eNoN), cnt,kk,ll
+      INTEGER :: i, j, a,gEl, faceNS(1,msh%fa(1)%eNoN), cnt,k,l
      2 , faceN(msh%fa(1)%eNoN),facev,litr
       REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac,
      2 xl(nsd,msh%eNoN), magud
@@ -1061,29 +1328,29 @@
       p%faID = 0
       magud = SUM(p%u**2D0)**0.5D0
 
-      faceloop: DO ii=1,msh%nFa
+      faceloop: DO i=1,msh%nFa
       litr = 0
-      jj = 0
+      j = 0
       DO WHILE(litr.eq.0)
-            IF (ALLOCATED(b%fa(ii)%els)) THEN
-                  jj = jj + 1
+            IF (ALLOCATED(b%fa(i)%els)) THEN
+                  j = j + 1
             ELSE
                   EXIT
             END IF
 
-            IF (jj .eq. size(b%fa(ii)%els)) litr = 1
+            IF (j .eq. size(b%fa(i)%els)) litr = 1
 !           First we need to find the volumetric element associated
 !           with the face, and get x's associated with that
-            gEl = msh%fa(ii)%gE(b%fa(ii)%els(jj))
+            gEl = msh%fa(i)%gE(b%fa(i)%els(j))
             xl = msh%x(:,msh%IEN(:,gEl))
-!           Next, we find which face of the volumetric element
-!           is the face element
-            out: DO  kk= 1, msh%fa(ii)%eNoN
+!           Next, we find which face of the volumetric element is the 
+!           face element
+            out: DO  k= 1, msh%fa(i)%eNoN
                   cnt = 1
-                  DO ll = 1,msh%eNoN 
-                        IF (msh%IEN(ll,gEl) .eq.
-     2     msh%fa(ii)%IEN(kk,b%fa(ii)%els(jj))) THEN
-                              faceNS(1,kk) = cnt
+                  DO l = 1,msh%eNoN 
+                        IF (msh%IEN(l,gEl) .eq.
+     2                      msh%fa(i)%IEN(k,b%fa(i)%els(j))) THEN
+                              faceNS(1,k) = cnt
                               CYCLE out
                         ENDIF
                         cnt = cnt+1
@@ -1164,7 +1431,7 @@
             CASE(1)
       xi(2) = 1
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
-     2  + Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
+     2   +  Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
@@ -1173,7 +1440,7 @@
             CASE(2)
       xi(3) = 1
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
-     2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
+     2   +  Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
@@ -1182,7 +1449,7 @@
             CASE(3)
       xi(1) = 1
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
-     2  + Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
+     2   +  Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
@@ -1191,7 +1458,7 @@
             CASE(4)
       xi(2) = -1
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
-     2  + Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
+     2   +  Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
@@ -1200,7 +1467,7 @@
             CASE(5)
       xi(3) = -1
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
-     2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
+     2   +  Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
@@ -1209,7 +1476,7 @@
             CASE(6)
       xi(1) = -1
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
-     2  + Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
+     2   +  Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
@@ -1255,7 +1522,7 @@
             CASE(2)
             xi(3) = 0
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
-     2  + Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
+     2   +  Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)    
@@ -1263,7 +1530,7 @@
             CASE(3)
             xi(2) = 0
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
-     2  + Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
+     2   +  Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
@@ -1271,7 +1538,7 @@
             CASE(4)
             xi(1) = 0
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
-     2  + Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
+     2   +  Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
       xc = (p%x + p%u*tc)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)  
@@ -1347,9 +1614,9 @@
 !     End NatxiEle
 
             IF (ALL(N.ge.-1D-7).and. (tc.ge.-1D-7)
-     2      .and. tc.lt.p%remdt) THEN
-                  p%faID(1) = ii
-                  p%faID(2) = b%fa(ii)%els(jj)
+     2      .and. (tc.lt.p%remdt)) THEN
+                  p%faID(1) = i
+                  p%faID(2) = b%fa(i)%els(j)
                   p%ti = tc
                   RETURN
             ENDIF
@@ -1366,7 +1633,7 @@
       INTEGER, INTENT(IN) :: idp
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
-      INTEGER :: ii, rndi, jj, Ac
+      INTEGER :: i, j, rndi, Ac
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
      2 a(nsd), b(nsd), vpar, vperp, temp(nsd), rnd,
      3 apd(nsd), mp, rhoF
@@ -1403,14 +1670,14 @@
       ELSE
 
 !     Exiting domain
-      faloop:DO ii = 1,msh%nFa
+      faloop:DO i = 1,msh%nFa
 !           Search for inlet to put particle back into
-            IF (faTyp(ii) .EQ. 1) THEN
+            IF (faTyp(i) .EQ. 1) THEN
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
-            rndi = FLOOR(msh%fa(ii)%nEl*rnd + 1)
+            rndi = FLOOR(msh%fa(i)%nEl*rnd + 1)
 !! silly hack b/c particles on edges get lost, will be fixed w/ periodic
-            p%x = msh%x(:,msh%fa(ii)%IEN(1,rndi))*.99       
+            p%x = msh%x(:,msh%fa(i)%IEN(1,rndi))*.99       
             EXIT faloop
             END IF
       ENDDO faloop
@@ -1810,6 +2077,5 @@
       !! Urgent fixes:
       !! Doesn't check collisions after wall
       !! Don't have it implemented so it can hit multiple walls
-      !! Make sbs not order NB^1/3
       !! Get subits working for sure
       !! Shapefprt should really be a subroutine

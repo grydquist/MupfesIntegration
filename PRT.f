@@ -237,6 +237,12 @@
       REAL(KIND=8), ALLOCATABLE :: tmpX(:,:), tmpV(:,:), tmpT(:), 
      2   tmpI(:)
 
+      open(99,file = fName)
+      write(99,*) 'x coord,y coord,z coord,pID'
+      DO i = 1,s%n
+            write(99,'(999(G21.6,:,","))') s%dat(i)%x,i
+      ENDDO
+      close(99)
 
 !     Work in progress... try looking at the dns one
       RETURN
@@ -329,6 +335,7 @@
      2 , s,xzero(nsd), N(msh%eNoN), xl(nsd,msh%eNoN), sbx(nsd)
      3 , sbxmin(nsd), elfcx(nsd,nsd), fnV(nsd), segpt(nsd,2), df(nsd) 
      4 , d1, d2, d3, segV(nsd), ipt(nsd), sbsegs(nsd*2**(nsd-1),nsd,2)
+     5 , c1(nsd), c2(nsd)
       LOGICAL :: orderl(nsd), inbox, fullacc
       INTEGER, ALLOCATABLE :: tsegs1(:),tsegs2(:), elfcpts(:,:)
 
@@ -359,7 +366,7 @@
       ENDDO
 
 !     Do we want to get the exact SBs in the elements?
-      fullacc = .true.
+      fullacc = .false.
       
 !     Size of sb
       sb%step = diff/sb%n
@@ -372,6 +379,7 @@
 
 !     Making an array of all possible line segments between the points
 !     in an element
+      ALLOCATE(tsegs1(0),tsegs2(0))
       DO i = 1,msh%eNoN-1
             DO j = 1,msh%eNoN
                   IF(j.gt.i) THEN
@@ -513,7 +521,7 @@
                         N = msh%nAtx(sbx,xl)
 
 !                       Check if vertex is in element
-                        IF(ALL(N .ge. -1D-7)) THEN
+                        IF(ALL(N .ge. -10*EPSILON(N))) THEN
                               inbox = .true.
                               EXIT
                         ENDIF
@@ -621,7 +629,7 @@
                   sbx(1) = sbxmin(1) + sb%step(1)*cx
                   sbx(2) = sbxmin(2) + sb%step(2)*cy
                   IF (nsd.eq.3) THEN
-                  sbx(3) = sbxmin(3) + sb%step(3)*cz
+                        sbx(3) = sbxmin(3) + sb%step(3)*cz
                   ENDIF
 
 !                 Now check if a box edge runs through an element face
@@ -651,9 +659,9 @@
 !                                   Vector along segment points
                                     segV = segpt(:,1) - segpt(:,2)
 !                                   Face normal vector
-                                    fnV = cross2(
-     2                                    (elfcx(:,2) - elfcx(:,1)),
-     3                                    (elfcx(:,3) - elfcx(:,1)))
+                                    c1 = elfcx(:,2) - elfcx(:,1)
+                                    c2 = elfcx(:,3) - elfcx(:,1)
+                                    fnV = cross2(c1,c2)
 !                                   Now we can finally find ipt
                                     df = segpt(:,1) - elfcx(:,1)
                                     d1 = df(1)*fnV(1) + df(2)*fnV(2) 
@@ -669,7 +677,7 @@
                                     IF(d3.lt.0 .or. d3.gt.1) CYCLE
 !                                   On element face?
                                     N = msh%nAtx(ipt,xl)
-                                    IF (ALL(N.ge.-1D-7))THEN
+                                    IF (ALL(N.ge.-10*EPSILON(N))) THEN
                                           inbox = .true.
                                           EXIT
                                     ENDIF
@@ -1004,7 +1012,7 @@
             N = msh%nAtx(p%x,xl)
 
 !           Checking if all shape functions are positive
-            IF (ALL(N.ge.-1D-7)) then
+            IF (ALL(N.ge.-EPSILON(N))) then
                   p%eID=ind
                   p%N = N
                   RETURN
@@ -1017,7 +1025,7 @@
             Nt = msh%nAtx(p%x,xl)
 
 !           Checking if all shape functions are positive
-            IF (ALL(Nt.ge.-1D-7)) then
+            IF (ALL(Nt.ge.-EPSILON(N))) then
                   print *, i, ip, p%sbIDe,Nt, p%x
                   print *, size(b%els)
                   print *, b%els
@@ -1033,39 +1041,69 @@
       SUBROUTINE seedPrt(prt)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT) :: prt
-      INTEGER ip
+      INTEGER ip, iel, i
       TYPE(pRawType) p
+      CLASS(mshType), POINTER :: msh
       REAL, ALLOCATABLE :: N(:)
-      REAL(KIND=8) dmin(nsd)
+      REAL(KIND=8) dmin(nsd), elseed
+      CHARACTER(LEN=stdL) :: fName
 
-      ALLOCATE(N(prt%dmn%msh(1)%eNoN))
+      msh => prt%dmn%msh(1)
+
+      ALLOCATE(N(msh%eNoN))
       dmin = prt%mat%D()
-      CALL prt%sbp%new(prt%dmn%msh(1),prt%n,dmin)
+      CALL prt%sbp%new(msh,prt%n,dmin)
 
       CALL RSEED(cm%id())
       DO ip=1, prt%n
-           p%u    = 0D0
-           p%pID  = INT(ip,8)
-           CALL RANDOM_NUMBER(p%x(:))
-           IF (nsd .EQ. 2) p%x(3) = 0D0
-           p%x(3) = p%x(3)*7.5D0
-           p%x = (p%x - (/0.5D0,0.5D0,0D0/))*40D0
-           p%x = p%x/2
-           !p%x(1) = 0D0
-           !p%x(2) = 0D0
-           !p%x(3) = 150D0/ip
-           !p%x(3) = 0.3D0
-           !if (ip.eq.2) p%x(3)=0.1D0
-           !if (mod(ip,2).eq.0) p%x(3) = 150/ip
-           !if (mod(ip,2).eq.1) p%x(3) = 150/(ip+1)+.2D0
-           !if (ip.eq.3) p%x = (/0D0,0.11D0, 75.1001D0/)
-           p%sbIDp = prt%sbp%id(p%x)
-           p%sbIDe = prt%sbe%id(p%x)
-!          Reset other collisions
-           IF(.not.ALLOCATED(p%OthColl)) ALLOCATE(p%OthColl(0))
-           prt%dat(ip) = p
-           N = prt%shapef(ip,prt%dmn%msh(1))
+            p%u    = 0D0
+            p%pID  = INT(ip,8)
+            !CALL RANDOM_NUMBER(p%x(:))
+            !IF (nsd .EQ. 2) p%x(3) = 0D0
+            !p%x(3) = p%x(3)*7.5D0
+            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*40D0
+            !p%x = p%x/2
+            !p%x(3) = 2*p%x(3)
+            CALL RANDOM_NUMBER(elseed)
+            iel = INT(elseed*(msh%nEl - 1),8) + 1
+            N = 0
+            DO WHILE((N(1) .lt. 1D-6) .or. 
+     2               (N(1) .gt. 1 - (msh%eNoN - 1)*1D-6))
+                  CALL RANDOM_NUMBER(N(1))
+            ENDDO
+
+            DO i = 2,msh%eNoN - 1
+                  DO WHILE ((N(i) .lt. 1D-6) .or. 
+     2                      (SUM(N(1:i)) .gt. 1 - (msh%eNoN - i)*1D-6))
+                        CALL RANDOM_NUMBER(N(i))
+                        N(i) = N(i)*(1 - SUM(N(1:(i - 1))))
+                  ENDDO
+            ENDDO
+            N(msh%eNoN) = 1 - SUM(N(1:(msh%eNoN - 1)))
+
+            p%x = 0
+            DO i = 1,msh%eNoN
+                  p%x = p%x + N(i)*msh%x(:,msh%IEN(i,iel))
+            ENDDO
+
+            !p%x(1) = 0D0
+            !p%x(2) = 0D0
+            !p%x(3) = 150D0/ip
+            !p%x(3) = 0.3D0
+            !if (ip.eq.2) p%x(3)=0.1D0
+            !if (mod(ip,2).eq.0) p%x(3) = 150/ip
+            !if (mod(ip,2).eq.1) p%x(3) = 150/(ip+1)+.2D0
+            !if (ip.eq.3) p%x = (/0D0,0.11D0, 75.1001D0/)
+            p%sbIDp = prt%sbp%id(p%x)
+            p%sbIDe = prt%sbe%id(p%x)
+!           Reset other collisions
+            IF(.not.ALLOCATED(p%OthColl)) ALLOCATE(p%OthColl(0))
+            prt%dat(ip) = p
+            N = prt%shapef(ip,msh)
       ENDDO
+      fName = 
+     2    "/home/gjr68/particle_tracking/prtcsvs/prt_0.csv"
+      CALL writePrt(prt,fName)
 
       RETURN
       END SUBROUTINE seedPrt
@@ -1200,7 +1238,8 @@
       p2%sbIDe = prt%sbe%id(p2%x)
 
 !     OOB, no collisiion
-      IF (ANY(Np1.lt.-1D-7) .or. ANY(Np2.lt.-1D-7)) THEN
+      IF (ANY(Np1.lt.-EPSILON(Np1)) .or. 
+     2    ANY(Np2.lt.-EPSILON(Np2))) THEN
             Np1 = prt%shapeF(id1, lM)
             Np2 = prt%shapeF(id2, lM)
             RETURN
@@ -1313,21 +1352,30 @@
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
       CLASS(mshType), INTENT(IN) :: msh
+      CLASS(sbeType), POINTER ::sb
       TYPE(pRawType), POINTER :: p
       TYPE(boxelType),  POINTER :: b
       REAL(KIND=8) :: Jac, xXi(nsd,nsd), Am(nsd,nsd), x1(nsd), tc
       REAL(KIND=8) :: N(msh%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
       INTEGER :: i, j, a,gEl, faceNS(1,msh%fa(1)%eNoN), cnt,k,l
-     2 , faceN(msh%fa(1)%eNoN),facev,litr
+     2 , faceN(msh%fa(1)%eNoN), facev, litr, allb(nsd)
       REAL(KIND=8) s, t, mx, my, ux, uy, uz, lx, ly, lz, iJac,
-     2 xl(nsd,msh%eNoN), magud
+     2 xl(nsd,msh%eNoN), magud, pV(nsd)
 
-      p => prt%dat(idp)
-      b => prt%sbe%box(p%sbIDe)
+      p  => prt%dat(idp)
+      sb => prt%sbe
+      b  => sb%box(p%sbIDe)
 
       p%faID = 0
       magud = SUM(p%u**2D0)**0.5D0
 
+!     First, we need to find all element boxes the particle travels thru
+!     pV is the vector detailing the distance the particle travels from
+!     the lower corner of the SB it is currently in
+      pV = p%u*p%remdt + MOD(p%x,sb%step)
+      
+!     Find how many SB the particle travels in each direction !!not done
+      allb = INT(pV/sb%step)
       faceloop: DO i=1,msh%nFa
       litr = 0
       j = 0
@@ -1366,12 +1414,9 @@
 
 !           Same process as NAtxEle for vol element
             DO a=1, msh%eNoN 
-                  xXi(:,1) = xXi(:,1) +
-     2          xl(:,a) * msh%Nx(1,a,1)
-                  xXi(:,2) = xXi(:,2) +
-     2          xl(:,a) * msh%Nx(2,a,1)
-                  xXi(:,3) = xXi(:,3) +
-     2          xl(:,a) * msh%Nx(3,a,1)   
+                  xXi(:,1) = xXi(:,1) + xl(:,a) * msh%Nx(1,a,1)
+                  xXi(:,2) = xXi(:,2) + xl(:,a) * msh%Nx(2,a,1)
+                  xXi(:,3) = xXi(:,3) + xl(:,a) * msh%Nx(3,a,1)   
 !                 Location of Gauss point (for Bm)
                   x1 = x1 + msh%N(a,1)*xl(:,a)
             ENDDO
@@ -1384,20 +1429,20 @@
      6      - xXi(1,3)*xXi(2,2)*xXi(3,1)
             iJac = 1D0/Jac
 
-          Am(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))*iJac
-          Am(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))*iJac
-          Am(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))*iJac
-          Am(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))*iJac
-          Am(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))*iJac
-          Am(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))*iJac
-          Am(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))*iJac
-          Am(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))*iJac
-          Am(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))*iJac
+            Am(1,1) = (xXi(2,2)*xXi(3,3) - xXi(2,3)*xXi(3,2))*iJac
+            Am(1,2) = (xXi(3,2)*xXi(1,3) - xXi(3,3)*xXi(1,2))*iJac
+            Am(1,3) = (xXi(1,2)*xXi(2,3) - xXi(1,3)*xXi(2,2))*iJac
+            Am(2,1) = (xXi(2,3)*xXi(3,1) - xXi(2,1)*xXi(3,3))*iJac
+            Am(2,2) = (xXi(3,3)*xXi(1,1) - xXi(3,1)*xXi(1,3))*iJac
+            Am(2,3) = (xXi(1,3)*xXi(2,1) - xXi(1,1)*xXi(2,3))*iJac
+            Am(3,1) = (xXi(2,1)*xXi(3,2) - xXi(2,2)*xXi(3,1))*iJac
+            Am(3,2) = (xXi(3,1)*xXi(1,2) - xXi(3,2)*xXi(1,1))*iJac
+            Am(3,3) = (xXi(1,1)*xXi(2,2) - xXi(1,2)*xXi(2,1))*iJac
 
 !           Finding A*x_1
-             DO a = 1,nsd
-            Bm(a) = Am(a,1)*x1(1) + Am(a,2)*x1(2) + Am(a,3)*x1(3)
-             ENDDO
+            DO a = 1,nsd
+                  Bm(a) = Am(a,1)*x1(1) + Am(a,2)*x1(2) + Am(a,3)*x1(3)
+            ENDDO
 
 !           Finding B = xi_1 - A*x_1
             Bm = msh%xi(:,1) - Bm
@@ -1429,7 +1474,7 @@
 
 !          +y
             CASE(1)
-      xi(2) = 1
+      xi(2) = 1D0
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
      2   +  Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1438,7 +1483,7 @@
 
 !           +z
             CASE(2)
-      xi(3) = 1
+      xi(3) = 1D0
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
      2   +  Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1447,7 +1492,7 @@
 
 !           +x
             CASE(3)
-      xi(1) = 1
+      xi(1) = 1D0
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
      2   +  Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1456,7 +1501,7 @@
 
 !           -y
             CASE(4)
-      xi(2) = -1
+      xi(2) = -1D0
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
      2   +  Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1465,7 +1510,7 @@
 
 !           -z
             CASE(5)
-      xi(3) = -1
+      xi(3) = -1D0
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
      2   +  Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1474,7 +1519,7 @@
 
 !           -x
             CASE(6)
-      xi(1) = -1
+      xi(1) = -1D0
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
      2   +  Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1507,7 +1552,7 @@
       SELECT CASE(facev)
             CASE(1)
 !           This is the hard one. All xi sum to 1
-            tc = (1 - p%x(1) * (Am(1,1)+Am(2,1)+Am(3,1))-
+            tc = (1D0-p%x(1) * (Am(1,1)+Am(2,1)+Am(3,1))-
      2                p%x(2) * (Am(1,2)+Am(2,2)+Am(3,2))-
      3                p%x(3) * (Am(1,3)+Am(2,3)+Am(3,3))- 
      4                (Bm(1)+Bm(2)+Bm(3)))/
@@ -1518,9 +1563,11 @@
       xi(1) = Am(1,1)*xc(1) + Am(1,2)*xc(2) + Am(1,3)*xc(3) + Bm(1)
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
+!     Having some issues with machine precision. This is to fix that
+      xi(1) = xi(1) + (1D0 - sum(xi))
           
             CASE(2)
-            xi(3) = 0
+            xi(3) = 0D0
       tc = -(-xi(3)+Am(3,1)*p%x(1) + Am(3,2)*p%x(2) + Am(3,3)*p%x(3)
      2   +  Bm(3))/(Am(3,1)*p%u(1) + Am(3,2)*p%u(2) + Am(3,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1528,7 +1575,7 @@
       xi(2) = Am(2,1)*xc(1) + Am(2,2)*xc(2) + Am(2,3)*xc(3) + Bm(2)    
 
             CASE(3)
-            xi(2) = 0
+            xi(2) = 0D0
       tc = -(-xi(2)+Am(2,1)*p%x(1) + Am(2,2)*p%x(2) + Am(2,3)*p%x(3)
      2   +  Bm(2))/(Am(2,1)*p%u(1) + Am(2,2)*p%u(2) + Am(2,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1536,7 +1583,7 @@
       xi(3) = Am(3,1)*xc(1) + Am(3,2)*xc(2) + Am(3,3)*xc(3) + Bm(3)
 
             CASE(4)
-            xi(1) = 0
+            xi(1) = 0D0
       tc = -(-xi(1)+Am(1,1)*p%x(1) + Am(1,2)*p%x(2) + Am(1,3)*p%x(3)
      2   +  Bm(1))/(Am(1,1)*p%u(1) + Am(1,2)*p%u(2) + Am(1,3)*p%u(3))
       xc = (p%x + p%u*tc)
@@ -1549,6 +1596,8 @@
             N(2) = xi(2)
             N(3) = xi(3)
             N(4) = 1D0 - xi(1) - xi(2) - xi(3)
+!           Machine precision issues still
+            IF (facev .eq. 1) N(4) = 0D0
       CASE(eType_WDG)
       io%e ="partcles not added for this element type"
             ux = xi(1)
@@ -1613,8 +1662,8 @@
 
 !     End NatxiEle
 
-            IF (ALL(N.ge.-1D-7).and. (tc.ge.-1D-7)
-     2      .and. (tc.lt.p%remdt)) THEN
+            IF (ALL(N.ge.-EPSILON(N)) .and. (tc.ge.-EPSILON(N)) 
+     2                                .and. (tc.le.p%remdt)) THEN
                   p%faID(1) = i
                   p%faID(2) = b%fa(i)%els(j)
                   p%ti = tc
@@ -1654,9 +1703,9 @@
 
 !           Get normal/tangent vector
             a = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
-     2    msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
+     2          msh%x(:,msh%fa(p%faID(1))%IEN(2,p%faID(2)))
             b = msh%x(:,msh%fa(p%faID(1))%IEN(1,p%faID(2))) - 
-     2    msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
+     2          msh%x(:,msh%fa(p%faID(1))%IEN(3,p%faID(2)))
             nV = CROSS2(a,b)
             temp = CROSS2(nV,p%u)
             tV = CROSS2(temp,nV)
@@ -1677,7 +1726,10 @@
             CALL RANDOM_NUMBER(rnd)
             rndi = FLOOR(msh%fa(i)%nEl*rnd + 1)
 !! silly hack b/c particles on edges get lost, will be fixed w/ periodic
-            p%x = msh%x(:,msh%fa(i)%IEN(1,rndi))*.99       
+            p%x = 0
+            DO j = 1, msh%eNoN
+                  p%x = p%x + p%N(j)*msh%x(:,msh%fa(i)%IEN(j,rndi))
+            END DO    
             EXIT faloop
             END IF
       ENDDO faloop
@@ -1737,7 +1789,6 @@
       SUBROUTINE advPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
-      INTEGER, ALLOCATABLE :: tmpstck(:)
       TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
       TYPE(pRawType), POINTER :: p, tp
@@ -1797,7 +1848,7 @@
 !!     Get shape functions/element of prediction
 !      Ntmp = tmpprt%shapeF(1, msh)
 !!     Check if predictor OOB
-!      IF (ANY(Ntmp.le.-1D-7)) THEN
+!      IF (ANY(Ntmp.le.-EPSILON(N))) THEN
 !!     This should advance to the edge of the wall, and then change the
 !!     velocity, as well as giving remdt
 !            CALL prt%findwl(idp,msh)
@@ -1844,7 +1895,7 @@
       N = prt%shapeF(idp, msh)
 
 !     If so, do a wall collision and continue on
-      IF (ANY(N .le. -1D-7)) THEN
+      IF (ANY(N .le. -EPSILON(N))) THEN
             p%x = xt
             p%sbIDe = tsbIDe
             p%sbIDp = tsbIDp
@@ -1864,12 +1915,12 @@
       SUBROUTINE solvePrt(eq)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT):: eq
-      INTEGER ip, a, e, eNoN, i ,j, k,l, subit, citer,i2,i1
-     2 ,IDSBp(2**nsd),IDSBp1(2**nsd),IDSBp2(2**nsd), i12,i22
+      INTEGER ip, a, i ,j, k,l, subit, citer,i2,i1
+     2 , IDSBp(2**nsd), IDSBp1(2**nsd), IDSBp2(2**nsd), i12, i22
       TYPE(mshType), POINTER :: lM
-      INTEGER, ALLOCATABLE :: tmpstck(:), N(:)
-      REAL(KIND=8):: dtp,maxdtp,sbdt(nsd),dp,taup,rhoP,mu,tim,
-     2 P1, P2, rhoF, umax(3) =0D0, dmin(nsd), tic, toc
+      INTEGER, ALLOCATABLE :: N(:)
+      REAL(KIND=8):: dtp, dp, taup, rhoP, mu,
+     2 P1, P2, rhoF, umax(3) = 0D0, dmin(nsd), tic, toc
       CHARACTER (LEN=stdl) fName
 
       lM => eq%dmn%msh(1)
@@ -2039,6 +2090,11 @@
             CALL eq%adv(i)
 !            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
 !     2            eq%dat(i)%u(3)
+           ! CALL RANDOM_NUMBER(eq%dat(i)%x(:))
+           ! eq%dat(i)%x(3) = eq%dat(i)%x(3)*7.5D0
+           ! eq%dat(i)%x = (eq%dat(i)%x - (/0.5D0,0.5D0,0D0/))*40D0
+           ! eq%dat(i)%x = eq%dat(i)%x/2
+           ! eq%dat(i)%sbide = eq%sbe%id(eq%dat(i)%x)
       ENDDO
       toc = CPUT()
       toc = toc - tic
@@ -2057,8 +2113,9 @@
       ENDDO
 
 !     Write particle data if it's a multiple of ten timestep
-      IF (mod(cTs,2).eq.0 .and. eq%itr.eq.0) THEN
-            fName = "prt_"//STR(cTs)//".vtk"
+      IF (mod(cTs,10).eq.0 .and. eq%itr.eq.0) THEN
+            fName = 
+     2    "/home/gjr68/particle_tracking/prtcsvs/prt_"//STR(cTs)//".csv"
             CALL writePrt(eq,fName)
       ENDIF
 
@@ -2079,3 +2136,4 @@
       !! Don't have it implemented so it can hit multiple walls
       !! Get subits working for sure
       !! Shapefprt should really be a subroutine
+      !! When a prt hits a wall, check all sbe it passes thru (started)

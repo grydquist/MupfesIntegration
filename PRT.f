@@ -45,15 +45,17 @@
 !     Individual boxes
          TYPE(boxelType), ALLOCATABLE :: box(:)
 !     Max and min sb values
-         REAL(KIND=8) :: minx(3), maxx(3)
+         REAL(KIND=8) :: minx(3)
       CONTAINS
 !     Sets up the search boxes pertaining to msh
          PROCEDURE :: new => newSbe
+!     Deallocates structure
+         PROCEDURE :: free => freeSbe
 !     Returns serach box ID, provided the position of a point
          PROCEDURE :: id => idSbe
       END TYPE
 
-!     Search boxes for particles
+!     Search boxes for particle collisions
       TYPE sbpType
 !     Created?
          LOGICAL :: crtd = .FALSE.
@@ -66,7 +68,7 @@
 !     Individual boxes
          TYPE(boxpType), ALLOCATABLE :: box(:)
 !     Max and min sb values
-         REAL(KIND=8) :: minx(3), maxx(3)
+         REAL(KIND=8) :: minx(3)
       CONTAINS
 !     Sets up the search boxes pertaining to msh
          PROCEDURE :: new => newSbp
@@ -185,6 +187,10 @@
       CONTAINS
 
 !####################################################################
+      
+!     IMPLEMENTATION
+
+!#####################################################################
 !---------------------------------------------------------------------
       SUBROUTINE eval3Prt(eq, eNoN, eqN, w, J, N, Nx, ks, lR, lK)
       CLASS(prtType), INTENT(IN) :: eq
@@ -295,6 +301,7 @@
       TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
       INTEGER i,a, Ac
       REAL(KIND=8), ALLOCATABLE :: volt(:)
+      REAL(KIND=8)  tic,toc
 
       open(88,file='pos.txt') 
 
@@ -311,7 +318,13 @@
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
 !     Assuming everything is in first mesh for searchboxes
+      tic = CPUT()
       CALL eq%sbe%new(eq%dmn%msh(1))
+      toc = CPUT()
+      toc = toc - tic
+      open(123,file='elvsp.txt',position='append')
+      write(123,*) toc
+      close(123)
 !     Getting volumes of influence for each node
       DO i = 1,eq%dmn%msh(1)%nEl
             volt = effvolel(eq%dmn%msh(1),i)
@@ -330,14 +343,14 @@
       CLASS(sbeType), INTENT(INOUT):: sb
       INTEGER :: i, j, k, l, iSb, xsteps(nsd)
      2  , xstepst(nsd,2), iSBmin, SBt, cx, cy, cz, nt
-     3  , elsegs(msh%eNoN*(msh%eNoN-1)/2,2), faceplne, elnmfc
+     3  ,  faceplne, elnmfc
       REAL(KIND=8) :: diff(nsd),elvert(nsd,2),xzerot(nsd,2),order(nsd,2)
      2 , s,xzero(nsd), N(msh%eNoN), xl(nsd,msh%eNoN), sbx(nsd)
      3 , sbxmin(nsd), elfcx(nsd,nsd), fnV(nsd), segpt(nsd,2), df(nsd) 
      4 , d1, d2, d3, segV(nsd), ipt(nsd), sbsegs(nsd*2**(nsd-1),nsd,2)
      5 , c1(nsd), c2(nsd)
       LOGICAL :: orderl(nsd), inbox, fullacc
-      INTEGER, ALLOCATABLE :: tsegs1(:),tsegs2(:), elfcpts(:,:)
+      INTEGER, ALLOCATABLE :: elfcpts(:,:), elsegs(:,:)
 
       IF (sb%crtd) RETURN
 
@@ -358,15 +371,23 @@
 
 !     Scaling to get approximately cubic SBs equal
 !     to much greater than # elements
-      s = (10*msh%nEl/(order(2,2)*order(3,2)))**(1D0/3D0)
+!     s is how much to increasebox size to get approx ratio
+!     of # sbs to # el (number multiplied by msh%nEl)
+      s = (10D0*msh%nEl/(order(2,2)*order(3,2)))**(1D0/3D0)
       
 !     First n estimate
       DO i = 1,nsd
             sb%n(order(i,1)) = MAX(INT(s*order(i,2)),1)
       ENDDO
+      !sb%n = (/6,6,40/)
+      ! sb%n = (/5,2,21/)  !1620
+      ! sb%n = (/7,3,28/)  !3840
+      ! sb%n = (/12,5,41/) !12960
+      ! sb%n = (/16,7,56/) !30720
+      ! !103680
 
 !     Do we want to get the exact SBs in the elements?
-      fullacc = .false.
+      fullacc = .true.
       
 !     Size of sb
       sb%step = diff/sb%n
@@ -376,20 +397,6 @@
       sb%minx(1) = minval(msh%x(1,:))
       sb%minx(2) = minval(msh%x(2,:))
       sb%minx(3) = minval(msh%x(3,:))
-
-!     Making an array of all possible line segments between the points
-!     in an element
-      ALLOCATE(tsegs1(0),tsegs2(0))
-      DO i = 1,msh%eNoN-1
-            DO j = 1,msh%eNoN
-                  IF(j.gt.i) THEN
-                        tsegs1 = [tsegs1,i]
-                        tsegs2 = [tsegs2,j]
-                  END IF
-            ENDDO
-      ENDDO
-      elsegs(:,1) = tsegs1
-      elsegs(:,2) = tsegs2
 
 !     Making an array of all possible line segments of SB edges
       sbsegs = 0
@@ -407,7 +414,7 @@
             sbsegs(1:2,2,2) = 1
       END IF
 
-!     Constructing planes for each face of el
+!     Constructing planes for each face of el & making lines from edges
       SELECT CASE(msh%eType)
       CASE(eType_TET)
 !           Tet: 4 faces to check
@@ -418,6 +425,10 @@
             elfcpts(:,2) = (/1,2,4/)
             elfcpts(:,3) = (/1,3,4/)
             elfcpts(:,4) = (/2,3,4/)
+!           6 edges to check
+            ALLOCATE(elsegs(6,2))
+            elsegs(:,1) = (/1,1,1,2,2,3/)
+            elsegs(:,2) = (/2,3,4,3,4,4/)
 
       CASE(eType_BRK)
 !           Brick: 6 faces to check
@@ -430,6 +441,10 @@
             elfcpts(:,4) = (/5,6,7/)
             elfcpts(:,5) = (/3,4,7/)
             elfcpts(:,6) = (/2,3,6/)
+!           12 edges to check
+            ALLOCATE(elsegs(12,2))
+            elsegs(:,1) = (/1,1,1,3,3,3,6,6,6,8,8,8/)
+            elsegs(:,2) = (/2,4,5,2,4,7,2,5,7,4,5,7/)
 
       CASE DEFAULT
          io%e = "Element type not supported yet"
@@ -533,7 +548,7 @@
                        IF((xl(1,k).ge.(sbxmin(1) + sb%step(1)* cx   ))
      2               .and.(xl(1,k).le.(sbxmin(1) + sb%step(1)*(cx+1))) 
      3               .and.(xl(2,k).ge.(sbxmin(2) + sb%step(2)* cy   ))
-     4               .and.(xl(2,k).le.(sbxmin(2) + sb%step(3)*(cy+1))))
+     4               .and.(xl(2,k).le.(sbxmin(2) + sb%step(2)*(cy+1))))
      5                  THEN
                        IF (nsd.eq.2) THEN 
                         inbox = .true.
@@ -550,7 +565,7 @@
 
 !                 Now check if an element edge runs through a box face
                   IF ((nsd.eq.3) .and. .not. inbox) THEN
-                  DO k = 1,msh%eNoN*(msh%eNoN-1)/2
+                  DO k = 1,size(elsegs(:,1))
                         IF (inbox) EXIT
                         segpt(:,1) =  msh%x(:,msh%IEN(elsegs(k,1),i))
                         segpt(:,2) =  msh%x(:,msh%IEN(elsegs(k,2),i))
@@ -677,7 +692,8 @@
                                     IF(d3.lt.0 .or. d3.gt.1) CYCLE
 !                                   On element face?
                                     N = msh%nAtx(ipt,xl)
-                                    IF (ALL(N.ge.-10*EPSILON(N))) THEN
+!                                   Perhaps delete?
+                                    IF (ALL(N.ge.-1000*EPSILON(N))) THEN
                                           inbox = .true.
                                           EXIT
                                     ENDIF
@@ -800,10 +816,48 @@
             ENDDO
       ENDDO
 
+      d3 = 0 ! mean el/cell
+      d2 = 0 ! number of nonzero boxes
+      DO i = 1,nt
+!           This seems to sort things?
+            do j = size(sb%box(i)%els), 2, -1
+                  call random_number(d1)
+                  cx = int(d1 * j) + 1
+                  cy = sb%box(i)%els(cx)
+                  sb%box(i)%els(cx) = sb%box(i)%els(j)
+                  sb%box(i)%els(j) = cy
+            end do
+            IF (size(sb%box(i)%els) .gt.0) THEN
+                  d3 = d3 + size(sb%box(i)%els)
+                  d2 = d2 + 1
+            END IF
+      ENDDO
+      ! d2 nonzero boxes, d3 (before below) total elements in cells
+      d3 = d3/d2!/nt/3.7412D2*4.8D2
+      ! mean(el/cell), ratio # boxes:els, # boxes, #els, all inc. non0
+      print *, d3, REAL(d2)/REAL(msh%nEl), d2,msh%nEl, nt
+      
+      open(123,file='elvsp.txt',position='append')
+      write(123,*) REAL(msh%nEl)/REAL(nt)
+      write(123,*) REAL(msh%nEl)/REAL(d2)
+      print *,  REAL(msh%nEl)/REAL(nt), REAL(msh%nEl)/REAL(d2),nt
+      close(123)
+
       sb%crtd = .TRUE.
 
       RETURN
       END SUBROUTINE newSbe
+
+!---------------------------------------------------------------Elements
+      SUBROUTINE freeSBe(sb)
+      CLASS(sbeType), INTENT(INOUT) :: sb
+      
+      IF (.not. sb%crtd) RETURN
+
+      DEALLOCATE(sb%box)
+      sb%crtd = .false.
+
+      END SUBROUTINE freeSBe
 
 !--------------------------------------------------------------Particles
       SUBROUTINE newSbp(sb,msh,np,dmin)
@@ -1019,7 +1073,7 @@
             END IF
       ENDDO
          
-!     Catch to see if Sb is the issue !! Get rid of eventually?
+!     We couldn't find the element. Catch to see if Sb is the issue.
       DO i = 1,msh%nEl
             xl = msh%x(:,msh%IEN(:,i))
             Nt = msh%nAtx(p%x,xl)
@@ -1029,6 +1083,7 @@
                   print *, i, ip, p%sbIDe,Nt, p%x
                   print *, size(b%els)
                   print *, b%els
+                  print *, xl
                   io%e = "SBe issue"
             END IF
       ENDDO
@@ -1038,23 +1093,29 @@
       RETURN
       END FUNCTION shapeFPrt
 !--------------------------------------------------------------------
+!     This could be better. It isn't super random right now.
+!     Perhaps could just pick a random location within bounds of domain,
+!     and reseed if not in an element? Would be costly, but effective
       SUBROUTINE seedPrt(prt)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT) :: prt
-      INTEGER ip, iel, i
+      INTEGER ip, iel, i, Npos, temp, cnt
+      INTEGER, ALLOCATABLE :: Nind(:)
       TYPE(pRawType) p
       CLASS(mshType), POINTER :: msh
       REAL, ALLOCATABLE :: N(:)
-      REAL(KIND=8) dmin(nsd), elseed
+      REAL(KIND=8) dmin(nsd), randn
       CHARACTER(LEN=stdL) :: fName
 
       msh => prt%dmn%msh(1)
 
       ALLOCATE(N(msh%eNoN))
+      ALLOCATE(Nind(msh%eNoN))
+      Nind = (/1:msh%eNoN/)
       dmin = prt%mat%D()
       CALL prt%sbp%new(msh,prt%n,dmin)
 
-      CALL RSEED(cm%id())
+      !CALL RSEED(cm%id()) !!
       DO ip=1, prt%n
             p%u    = 0D0
             p%pID  = INT(ip,8)
@@ -1064,22 +1125,32 @@
             !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*40D0
             !p%x = p%x/2
             !p%x(3) = 2*p%x(3)
-            CALL RANDOM_NUMBER(elseed)
-            iel = INT(elseed*(msh%nEl - 1),8) + 1
+            CALL RANDOM_NUMBER(randn)
+            iel = INT(randn*(msh%nEl - 1),8) + 1
             N = 0
-            DO WHILE((N(1) .lt. 1D-6) .or. 
-     2               (N(1) .gt. 1 - (msh%eNoN - 1)*1D-6))
-                  CALL RANDOM_NUMBER(N(1))
+!           Randomizing the order shape functions are put in
+            DO i = size(Nind), 2, -1
+                  CALL RANDOM_NUMBER(randn)
+                  Npos = int(randn*i) + 1
+                  temp = Nind(Npos)
+                  Nind(Npos) = Nind(i)
+                  Nind(i) = temp
             ENDDO
-
-            DO i = 2,msh%eNoN - 1
+!! Eventually target specific elements using parent domain
+            DO i = 1,msh%eNoN - 1
+                  cnt = 0
                   DO WHILE ((N(i) .lt. 1D-6) .or. 
-     2                      (SUM(N(1:i)) .gt. 1 - (msh%eNoN - i)*1D-6))
+     2                    (SUM(N(1:i)) .gt. 1 - (msh%eNoN - i)*1D-6))
                         CALL RANDOM_NUMBER(N(i))
                         N(i) = N(i)*(1 - SUM(N(1:(i - 1))))
+                        IF(cnt.eq.99) N = (1/(msh%eNoN+0.001D0))
+                        cnt = cnt+1
                   ENDDO
             ENDDO
             N(msh%eNoN) = 1 - SUM(N(1:(msh%eNoN - 1)))
+            N = N(Nind)
+            !CALL RANDOM_NUMBER(N)
+            N = N/sum(N)
 
             p%x = 0
             DO i = 1,msh%eNoN
@@ -1102,7 +1173,7 @@
             N = prt%shapef(ip,msh)
       ENDDO
       fName = 
-     2    "/home/gjr68/particle_tracking/prtcsvs/prt_0.csv"
+     2    "/home/gjr68/particle_tracking/alltxtres/prtcsvs/prt_0.csv"
       CALL writePrt(prt,fName)
 
       RETURN
@@ -1380,7 +1451,7 @@
       litr = 0
       j = 0
       DO WHILE(litr.eq.0)
-            IF (ALLOCATED(b%fa(i)%els)) THEN
+            IF (ALLOCATED(b%fa) .and. ALLOCATED(b%fa(i)%els)) THEN
                   j = j + 1
             ELSE
                   EXIT
@@ -1727,7 +1798,7 @@
             rndi = FLOOR(msh%fa(i)%nEl*rnd + 1)
 !! silly hack b/c particles on edges get lost, will be fixed w/ periodic
             p%x = 0
-            DO j = 1, msh%eNoN
+            DO j = 1, msh%fa(i)%eNoN
                   p%x = p%x + p%N(j)*msh%x(:,msh%fa(i)%IEN(j,rndi))
             END DO    
             EXIT faloop
@@ -1918,7 +1989,7 @@
       INTEGER ip, a, i ,j, k,l, subit, citer,i2,i1
      2 , IDSBp(2**nsd), IDSBp1(2**nsd), IDSBp2(2**nsd), i12, i22
       TYPE(mshType), POINTER :: lM
-      INTEGER, ALLOCATABLE :: N(:)
+      INTEGER, ALLOCATABLE :: N(:) !!  Get rid of me!!
       REAL(KIND=8):: dtp, dp, taup, rhoP, mu,
      2 P1, P2, rhoF, umax(3) = 0D0, dmin(nsd), tic, toc
       CHARACTER (LEN=stdl) fName
@@ -1988,8 +2059,7 @@
             ALLOCATE  (eq%dat(i)%OthColl(0))
       ENDDO
 
-      tic = CPUT()
-
+!     Go through each box and check collisions with all prts in box
       DO i = 1,eq%sbp%nt
             DO j=1,eq%sbp%box(i)%nprt
                   DO k=j+1,eq%sbp%box(i)%nprt
@@ -2003,15 +2073,6 @@
                   ENDDO
             ENDDO
       ENDDO
-
-      toc = CPUT()
-      toc = toc - tic
-      if (cm%mas()) then
-         open(123,file='speed_'//STR(eq%n)//'.txt',position='append')
-         write(123,*) toc
-         close(123)
-      end if 
-      !print *, toc
 
       IF (ALLOCATED(eq%collt)) THEN
 !     Keep looping over collisions, adding more as they appear, 
@@ -2084,7 +2145,26 @@
 !     Reset collpair/collt
       IF (ALLOCATED(eq%collpair)) DEALLOCATE(eq%collpair, eq%collt)
 
+!     Test to see how long it takes to find elements
+      open(123,file='elvsp.txt',position='append')
+      DO k = 1,100
+      call eq%seed
       tic = CPUT()
+      DO i=1, eq%n
+            eq%dat(i)%eido = 1
+            N = eq%shapeF(i, eq%dmn%msh(1))
+      ENDDO
+      toc = CPUT()
+      toc = toc - tic
+      if (cm%mas()) then
+           !open(123,file='speed_'//STR(eq%n)//'.txt',position='append')
+            write(123,*) toc
+      end if 
+      print *, toc, k
+      ENDDO
+      close(123)
+      STOP
+
       DO i = 1,eq%n
 !           Now no particles will collide on their path. Safe to advance
             CALL eq%adv(i)
@@ -2096,9 +2176,6 @@
            ! eq%dat(i)%x = eq%dat(i)%x/2
            ! eq%dat(i)%sbide = eq%sbe%id(eq%dat(i)%x)
       ENDDO
-      toc = CPUT()
-      toc = toc - tic
-      !print *, toc
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
       P2 = eq%dmn%msh(1)%integ(2,eq%Pns%s)
@@ -2115,7 +2192,8 @@
 !     Write particle data if it's a multiple of ten timestep
       IF (mod(cTs,10).eq.0 .and. eq%itr.eq.0) THEN
             fName = 
-     2    "/home/gjr68/particle_tracking/prtcsvs/prt_"//STR(cTs)//".csv"
+     2       "/home/gjr68/particle_tracking/alltxtres/prtcsvs/prt_"//
+     3       STR(cTs)//".csv"
             CALL writePrt(eq,fName)
       ENDIF
 

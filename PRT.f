@@ -301,9 +301,6 @@
       TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
       INTEGER i,a, Ac
       REAL(KIND=8), ALLOCATABLE :: volt(:)
-      REAL(KIND=8)  tic,toc
-
-      open(88,file='pos.txt') 
 
       ALLOCATE(volt(eq%dmn%msh(1)%eNon))
       ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n),eq%wV(eq%dmn%msh(1)%nNo))
@@ -318,13 +315,7 @@
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
 !     Assuming everything is in first mesh for searchboxes
-      tic = CPUT()
       CALL eq%sbe%new(eq%dmn%msh(1))
-      toc = CPUT()
-      toc = toc - tic
-      open(123,file='elvsp.txt',position='append')
-      write(123,*) toc
-      close(123)
 !     Getting volumes of influence for each node
       DO i = 1,eq%dmn%msh(1)%nEl
             volt = effvolel(eq%dmn%msh(1),i)
@@ -379,12 +370,6 @@
       DO i = 1,nsd
             sb%n(order(i,1)) = MAX(INT(s*order(i,2)),1)
       ENDDO
-      !sb%n = (/6,6,40/)
-      ! sb%n = (/5,2,21/)  !1620
-      ! sb%n = (/7,3,28/)  !3840
-      ! sb%n = (/12,5,41/) !12960
-      ! sb%n = (/16,7,56/) !30720
-      ! !103680
 
 !     Do we want to get the exact SBs in the elements?
       fullacc = .true.
@@ -816,33 +801,6 @@
             ENDDO
       ENDDO
 
-      d3 = 0 ! mean el/cell
-      d2 = 0 ! number of nonzero boxes
-      DO i = 1,nt
-!           This seems to sort things?
-            do j = size(sb%box(i)%els), 2, -1
-                  call random_number(d1)
-                  cx = int(d1 * j) + 1
-                  cy = sb%box(i)%els(cx)
-                  sb%box(i)%els(cx) = sb%box(i)%els(j)
-                  sb%box(i)%els(j) = cy
-            end do
-            IF (size(sb%box(i)%els) .gt.0) THEN
-                  d3 = d3 + size(sb%box(i)%els)
-                  d2 = d2 + 1
-            END IF
-      ENDDO
-      ! d2 nonzero boxes, d3 (before below) total elements in cells
-      d3 = d3/d2!/nt/3.7412D2*4.8D2
-      ! mean(el/cell), ratio # boxes:els, # boxes, #els, all inc. non0
-      print *, d3, REAL(d2)/REAL(msh%nEl), d2,msh%nEl, nt
-      
-      open(123,file='elvsp.txt',position='append')
-      write(123,*) REAL(msh%nEl)/REAL(nt)
-      write(123,*) REAL(msh%nEl)/REAL(d2)
-      print *,  REAL(msh%nEl)/REAL(nt), REAL(msh%nEl)/REAL(d2),nt
-      close(123)
-
       sb%crtd = .TRUE.
 
       RETURN
@@ -1073,7 +1031,8 @@
             END IF
       ENDDO
          
-!     We couldn't find the element. Catch to see if Sb is the issue.
+!     We couldn't find the element. Catch to see if in domain, and SB
+!     missed it. Could havbe this as a debug thing
       DO i = 1,msh%nEl
             xl = msh%x(:,msh%IEN(:,i))
             Nt = msh%nAtx(p%x,xl)
@@ -1743,6 +1702,7 @@
 
       ENDDO
       ENDDO faceloop
+!     We couldn't find the right face in this searchbox
       print *, p%N, p%x, p%u, p%sbIDe, idp
       io%e = "Wrong searchbox"
       
@@ -1989,9 +1949,8 @@
       INTEGER ip, a, i ,j, k,l, subit, citer,i2,i1
      2 , IDSBp(2**nsd), IDSBp1(2**nsd), IDSBp2(2**nsd), i12, i22
       TYPE(mshType), POINTER :: lM
-      INTEGER, ALLOCATABLE :: N(:) !!  Get rid of me!!
       REAL(KIND=8):: dtp, dp, taup, rhoP, mu,
-     2 P1, P2, rhoF, umax(3) = 0D0, dmin(nsd), tic, toc
+     2 P1, P2, rhoF, umax(3) = 0D0, dmin(nsd)
       CHARACTER (LEN=stdl) fName
 
       lM => eq%dmn%msh(1)
@@ -1999,11 +1958,9 @@
       rhoF  = eq%mns%rho()
       mu    = eq%mns%mu()
       dp    = eq%mat%D()
-      ALLOCATE(N(lm%eNoN))
 
 !     Reset twc force to zero
       eq%twc%v(:,:) = 0D0
-!      eq%twc%v(3,1952) = 1D0
 
 !     Reset collision counter
       eq%collcnt = 0
@@ -2145,26 +2102,6 @@
 !     Reset collpair/collt
       IF (ALLOCATED(eq%collpair)) DEALLOCATE(eq%collpair, eq%collt)
 
-!     Test to see how long it takes to find elements
-      open(123,file='elvsp.txt',position='append')
-      DO k = 1,100
-      call eq%seed
-      tic = CPUT()
-      DO i=1, eq%n
-            eq%dat(i)%eido = 1
-            N = eq%shapeF(i, eq%dmn%msh(1))
-      ENDDO
-      toc = CPUT()
-      toc = toc - tic
-      if (cm%mas()) then
-           !open(123,file='speed_'//STR(eq%n)//'.txt',position='append')
-            write(123,*) toc
-      end if 
-      print *, toc, k
-      ENDDO
-      close(123)
-      STOP
-
       DO i = 1,eq%n
 !           Now no particles will collide on their path. Safe to advance
             CALL eq%adv(i)
@@ -2188,6 +2125,7 @@
 !     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
      6  ,P1,P2
       ENDDO
+      print *, eq%dat(1)%x
 
 !     Write particle data if it's a multiple of ten timestep
       IF (mod(cTs,10).eq.0 .and. eq%itr.eq.0) THEN

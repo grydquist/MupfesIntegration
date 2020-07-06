@@ -69,6 +69,8 @@
          TYPE(boxpType), ALLOCATABLE :: box(:)
 !     Max and min sb values
          REAL(KIND=8) :: minx(3)
+!     Overlap
+         REAL(KIND=8) :: Ov(3)
       CONTAINS
 !     Sets up the search boxes pertaining to msh
          PROCEDURE :: new => newSbp
@@ -124,6 +126,8 @@
          INTEGER :: maxN = 1024
 !     Current size
          INTEGER :: n = 0
+!     Coupling (1,2,4)
+         INTEGER :: couple = 1
 !     Current timestep
          REAL(KIND=8) :: dt = 0D0
 !     Search boxes to find element hosting particles
@@ -233,24 +237,66 @@
       IMPLICIT NONE
       CLASS(prtType), INTENT(IN) :: s
       CHARACTER(LEN=*), INTENT(IN) :: fName
-      CHARACTER(LEN=3), PARAMETER :: names(2) = (/'Tmp','dID'/)
+      CHARACTER(LEN=1), PARAMETER :: names = 'dID'
       INTEGER i, ip, l, fid, tN, pN, n
       INTEGER(KIND=8) pos(2)
       CHARACTER(LEN=stdL) hdr
       TYPE(pRawType), POINTER :: p
       TYPE(prtType) prt, tPrt
       INTEGER, ALLOCATABLE :: lN(:)
-      REAL(KIND=8), ALLOCATABLE :: tmpX(:,:), tmpV(:,:), tmpT(:), 
+      REAL(KIND=8), ALLOCATABLE :: tmpX(:,:), tmpV(:,:), 
      2   tmpI(:)
 
-      open(99,file = fName)
-      write(99,*) 'x coord,y coord,z coord,pID'
-      DO i = 1,s%n
-            write(99,'(999(G21.6,:,","))') s%dat(i)%x,i
-      ENDDO
-      close(99)
+      tn = s%n
+      fid = 142
+      OPEN(fid, FILE=TRIM(fName))
+      CLOSE(fid,STATUS='DELETE')
+      OPEN(fid, FILE=TRIM(fName), ACCESS="STREAM", 
+     2      CONVERT='BIG_ENDIAN')
+      
+      hdr = "# vtk DataFile Version 3.0"//eol//
+     1      "Particle info"//eol//
+     2      "BINARY"//eol//
+     3      "DATASET POLYDATA"//eol//
+     4      "POINTS "//STR(tN,intPr)//" double"//eol
+      l   = LEN(TRIM(hdr))
+      WRITE(fid) hdr(1:l)
+!     Four pos point to the position in the file associated with
+!     position, velocity, temprature, disID
+      pos = l + 1
+      pos(2:) = pos(2:) + 24*INT(tN,8) ! position
+      hdr = eol//"VERTICES 1 "//STR(tN+1,intPr)//eol
+      l   = LEN(TRIM(hdr))
+      WRITE(fid,pos=pos(2)) hdr(1:l)
+      pos(2:) = pos(2:) + l
+      WRITE(fid,pos=pos(2)) tN, (i, i=0,tN-1)
+      pos(2:) = pos(2:) + 4*INT(tN,8) + 4 ! Vertices
+      hdr = eol//"POINT_DATA "//STR(tN,intPr)//eol
+     2      //"VECTORS Vel double"//eol
+      l   = LEN(TRIM(hdr))
+      WRITE(fid,pos=pos(2)) hdr(1:l)
+      pos(2:) = pos(2:) + l
 
-!     Work in progress... try looking at the dns one
+!     Total number of processed particles
+      pN = 0
+      DO 
+            n = tN-pN
+            IF (n .EQ. 0) EXIT
+
+            ALLOCATE(tmpV(3,n), tmpX(3,n))
+            DO ip=1, n
+            i = s%dat(ip)%pid
+            tmpX(:,i-pN) = s%dat(ip)%x
+            tmpV(:,i-pN) = s%dat(ip)%u
+            END DO
+            WRITE(fid,pos=pos(1)) tmpX
+            WRITE(fid,pos=pos(2)) tmpV
+            pos(1:2) = pos(1:2) + 24*n
+            DEALLOCATE(tmpV, tmpX)
+            pN = pN + n
+      END DO
+      CLOSE(fid)
+
       RETURN
       END SUBROUTINE writePrt
 !---------------------------------------------------------------------
@@ -264,7 +310,7 @@
       CLASS(varType), INTENT(IN), OPTIONAL, TARGET :: twc
       TYPE(prtType) :: eq
       TYPE(lstType), POINTER :: lPt1,lPt2,lPBC
-      INTEGER nFa,iFa, typ2
+      INTEGER nFa,iFa, typ2, typ3
       CHARACTER(LEN=stdL) stmp,typ1
 
       CALL eq%new(eqSp, dmn, lst)
@@ -291,6 +337,14 @@
          END SELECT
       ENDDO
 
+!     Get the coupling strategy
+      typ3 = 0
+      lPt1 => lst%get(typ3,"Coupling")
+      IF((typ3 .NE. 1) .AND. (typ3 .NE. 2) .AND. 
+     2   (typ3 .NE. 4) .AND. (typ3 .NE. 0)) THEN
+            io%e = "Simulation must be 1, 2, or 4 way coupled"
+      END IF
+      IF(typ3 .NE. 0) eq%couple = typ3
 
       RETURN
       END FUNCTION newPrt
@@ -301,6 +355,8 @@
       TYPE(gVarType), INTENT(IN), TARGET, OPTIONAL :: var(:)
       INTEGER i,a, Ac
       REAL(KIND=8), ALLOCATABLE :: volt(:)
+
+      open(88,file='pos.txt')
 
       ALLOCATE(volt(eq%dmn%msh(1)%eNon))
       ALLOCATE(eq%dat(eq%n), eq%ptr(eq%n),eq%wV(eq%dmn%msh(1)%nNo))
@@ -315,23 +371,27 @@
       eq%var(2) = gVarType(1,'PPosition',eq%dmn)
 
 !     Assuming everything is in first mesh for searchboxes
-      CALL eq%sbe%new(eq%dmn%msh(1))
-!     Getting volumes of influence for each node
-      DO i = 1,eq%dmn%msh(1)%nEl
-            volt = effvolel(eq%dmn%msh(1),i)
-            DO a = 1,eq%dmn%msh(1)%eNoN
-                  Ac = eq%dmn%msh(1)%IEN(a,i)
-                  eq%wV(Ac) = eq%wV(Ac) + volt(a)
+      CALL eq%sbe%new(eq%dmn%msh(1), eq%n)
+      
+!     Getting volumes of influence for each node for twc (if tw coupled)
+      IF (eq%couple .GT. 1) THEN
+            DO i = 1,eq%dmn%msh(1)%nEl
+                  volt = effvolel(eq%dmn%msh(1),i)
+                  DO a = 1,eq%dmn%msh(1)%eNoN
+                        Ac = eq%dmn%msh(1)%IEN(a,i)
+                        eq%wV(Ac) = eq%wV(Ac) + volt(a)
+                  ENDDO
             ENDDO
-      ENDDO
+      END IF
 
       CALL eq%seed()
 
       END SUBROUTINE setupPrt
 !---------------------------------------------------------------Elements
-      SUBROUTINE newSbe(sb,msh)
+      SUBROUTINE newSbe(sb,msh,np)
       CLASS(mshType), INTENT(IN) :: msh
       CLASS(sbeType), INTENT(INOUT):: sb
+      INTEGER, INTENT(IN) :: np
       INTEGER :: i, j, k, l, iSb, xsteps(nsd)
      2  , xstepst(nsd,2), iSBmin, SBt, cx, cy, cz, nt
      3  ,  faceplne, elnmfc
@@ -339,7 +399,7 @@
      2 , s,xzero(nsd), N(msh%eNoN), xl(nsd,msh%eNoN), sbx(nsd)
      3 , sbxmin(nsd), elfcx(nsd,nsd), fnV(nsd), segpt(nsd,2), df(nsd) 
      4 , d1, d2, d3, segV(nsd), ipt(nsd), sbsegs(nsd*2**(nsd-1),nsd,2)
-     5 , c1(nsd), c2(nsd)
+     5 , c1(nsd), c2(nsd), alph, nalph, Calph
       LOGICAL :: orderl(nsd), inbox, fullacc
       INTEGER, ALLOCATABLE :: elfcpts(:,:), elsegs(:,:)
 
@@ -363,9 +423,29 @@
 !     Scaling to get approximately cubic SBs equal
 !     to much greater than # elements
 !     s is how much to increasebox size to get approx ratio
-!     of # sbs to # el (number multiplied by msh%nEl)
-      s = (10D0*msh%nEl/(order(2,2)*order(3,2)))**(1D0/3D0)
-      
+!     of # sbs to # el (1/alph)
+
+!     C (Calph) is to be hardcoded in after determination, but about
+!     500 is typically pretty good. Nt time steps may need to
+!     be estimated. n (nalph) is based off element type as below
+      SELECT CASE(msh%eType)
+      CASE(eType_TET)
+            nalph = 0.28
+            Calph = 503
+      CASE(eType_BRK)
+            nalph = 0.33
+            Calph = 50
+      CASE DEFAULT
+         io%e = "Element type not supported yet"
+      END SELECT
+
+      alph = alphind(Calph, nalph, msh%Nel, np, 125)
+!     This alph is w.r.t. nonempty boxes, and we need total boxes for s
+!     Nb/Nt is approx = Vol_geom/Vol_bounding_box
+      alph = alph*msh%vol/(diff(1)*diff(2)*diff(3))*msh%scaleF**nsd
+
+      s = (msh%nEl/alph/(order(2,2)*order(3,2)))**(1D0/3D0)
+
 !     First n estimate
       DO i = 1,nsd
             sb%n(order(i,1)) = MAX(INT(s*order(i,2)),1)
@@ -801,6 +881,34 @@
             ENDDO
       ENDDO
 
+      
+! !     Some useful parameters that I used for the paper and outputted
+
+!       d3 = 0 ! mean el/cell (gamma)
+!       d2 = 0 ! number of nonzero boxes (Nb, nt is Nbt)
+!       DO i = 1,nt
+! !           This seems to sort things?
+!             do j = size(sb%box(i)%els), 2, -1
+!                   call random_number(d1)
+!                   cx = int(d1 * j) + 1
+!                   cy = sb%box(i)%els(cx)
+!                   sb%box(i)%els(cx) = sb%box(i)%els(j)
+!                   sb%box(i)%els(j) = cy
+!             end do
+!             IF (size(sb%box(i)%els) .gt.0) THEN
+!                   d3 = d3 + size(sb%box(i)%els)
+!                   d2 = d2 + 1
+!             END IF
+!       ENDDO
+
+!       ! d2 nonzero boxes, d3 (before below) total elements in cells
+!       d3 = d3/d2!/nt/3.7412D2*4.8D2
+!       ! mean(el/cell), ratio # boxes:els, # boxes, #els, all inc. non0
+!       print *, d3, REAL(d2)/REAL(msh%nEl), d2,msh%nEl, nt
+!       ! nonsense, alpha, Nbt
+!       print *,  REAL(msh%nEl)/REAL(nt), REAL(msh%nEl)/REAL(d2),nt
+!       stop
+
       sb%crtd = .TRUE.
 
       RETURN
@@ -827,27 +935,31 @@
       REAL(KIND=8) :: diff(nsd), step(nsd), s
 
       IF (sb%crtd) RETURN
-!     Smallest possible SB (diam + possible travel distance)
 
 !     Domain ranges
       diff(1)=MAXVAL(msh%x(1,:))-MINVAL(msh%x(1,:))
       diff(2)=MAXVAL(msh%x(2,:))-MINVAL(msh%x(2,:))
       diff(3)=MAXVAL(msh%x(3,:))-MINVAL(msh%x(3,:))
 
-!     Starting with particles the minimum traveling distance
+!     Starting with two times collision range (min half box)
       step = dmin
-!     Scaling to get NB = NP
-      s = (diff(1)/step(1)*diff(2)/step(2)*diff(3)/step(3)/np)
-     2 **(1D0/3D0)
+      sb%Ov = dmin
+
+!     Approx scaling to get NB = NP
+      s = (diff(1)*diff(2)*diff(3)/(np*step(1)*step(2)*step(3)))
+     2 **(1D0/3D0)*0.5D0
 
 !     Applying this scaling
       step = step*MAX(s,1D0)
       
-!     Getting the number of boxes from this
-      sb%n = MAX(INT(diff/step),(/1,1,1/))!(/5,5,38/)!
+!     Getting the number of boxes from this, including min overlap
+      sb%n = INT((diff - 2D0*step)/(2D0*step - dmin))
+!     Let's get this closer to Np, but keep this ratio
+      s = (np/(REAL(sb%n(1)*sb%n(2)*sb%n(3))))**(1D0/3D0)
+      sb%n = INT(REAL(sb%n)*s)
       
 !     Half-size of sb
-      sb%step = diff/sb%n!((sb%n + 1D0)/2D0)
+      sb%step = (diff + (sb%n-1)*dmin)/(2D0*sb%n)
       sb%nt = sb%n(1)*sb%n(2)*sb%n(3)
 
       ALLOCATE(sb%box(sb%nt))
@@ -885,14 +997,22 @@
       INTEGER, INTENT(IN) :: IDSBp(2**nsd), ip
       INTEGER :: i, cnted(2**nsd)
 
+
       cnted = 0
       DO i = 1,2**nsd
+
+!           Actual adding procedure
             IF ((IDSBp(i).le.sb%nt).and. (IDSBp(i).gt.0)
      2       .and. .not.(ANY(IDSBp(i).eq.cnted))) THEN
-!     Increase number in box
+!                 Sometimes if a particle goers to a new box after collision,
+!                 it will keep getting added to the boxes each subiteration.
+!                 This is to help prevent that.
+                  IF((sb%box(IDSBp(i))%nprt.ne.0) 
+     2            .and. ANY(ip .eq. sb%box(IDSBp(i))%c)) CYCLE
+!                 Increase number in box
                   sb%box(IDSBp(i))%nprt = sb%box(IDSBp(i))%nprt + 1
 
-!     Add to end (a little different if it's the first element)
+!                 Add to end (a little different if it's the first element)
                   IF (sb%box(IDSBp(i))%nprt.ne.1) THEN
                         sb%box(IDSBp(i))%c =
      2                  [sb%box(IDSBp(i))%c,ip] 
@@ -970,29 +1090,75 @@
       REAL(KIND=8) :: xzero(nsd)
       INTEGER :: xsteps(nsd)
 
+!     Start all at -1, only positive values are added to boxes
+      iSb = 0
+
 !     Set domain back to zero
-      xzero(1) = x(1) - sb%minx(1)
-      xzero(2) = x(2) - sb%minx(2)
-      xzero(3) = x(3) - sb%minx(3)
+      xzero = x - sb%minx
 
 !     Find which searchbox the particle is in
-!     Number of searchbox steps in x,y,and z
-      xsteps = FLOOR(2*xzero/sb%step)
+!     Number of searchbox steps in x,y,and z, considering overlap
+      xsteps =  FLOOR(xzero/(2D0*sb%step-sb%Ov))
+
+!     Set back if it's right on the far edge
+      IF(xsteps(1) .eq. sb%n(1)) xsteps(1) = xsteps(1) - 1
+      IF(xsteps(2) .eq. sb%n(2)) xsteps(2) = xsteps(2) - 1
+      IF(xsteps(3) .eq. sb%n(3)) xsteps(3) = xsteps(3) - 1
+
 !     Furthest searchbox in front
       iSb(1) = xsteps(1) + sb%n(1)*xsteps(2) +
      2   sb%n(1)*sb%n(2)*xsteps(3) + 1
-!     Previous sb in x
-      iSb(2) = iSb(1) - 1
-!     Previous sb's in y
-      iSb(3) = iSb(1) - sb%n(1)
-      iSb(4) = iSb(3) - 1
-!     Next sb's in z (if available)
-      if (nsd.eq.3) then
-         iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
-         iSb(6) = iSb(5) - 1
-         iSb(7) = iSb(5) - sb%n(1)
-         iSb(8) = iSb(7) - 1
-      end if
+
+!     Check if still in overlapped portion of prev box, x
+      IF(xzero(1) - xsteps(1)*(2D0*sb%step(1) - sb%Ov(1)) 
+     2   <= sb%Ov(1) .and. (xsteps(1) .ne. 0)) THEN
+            IF (xsteps(1) .ne. 0) iSb(2) = iSb(1) - 1
+
+!           Now check previous sb in y too
+            IF(xzero(2) - xsteps(2)*(2D0*sb%step(2) - sb%Ov(2)) 
+     2         <= sb%Ov(2) .and. (xsteps(2) .ne. 0)) THEN
+                  IF (xsteps(2) .ne. 0) iSb(3) = iSb(1) - sb%n(1)
+                  IF (xsteps(1) .ne. 0) iSb(4) = iSb(3) - 1
+!                 And z...
+                  IF((nsd.eq.3) .and. xzero(3) - 
+     2            xsteps(3)*(2D0*sb%step(3) - sb%Ov(3))
+     3            <= sb%Ov(3)  .and. (xsteps(3) .ne. 0)) THEN
+                        IF (xsteps(3) .ne. 0)
+     2                        iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
+                        IF (xsteps(1) .ne. 0)
+     2                        iSb(6) = iSb(5) - 1
+                        IF (xsteps(2) .ne. 0)
+     2                        iSb(7) = iSb(5) - sb%n(1)
+                        IF (xsteps(1) .ne. 0)
+     2                        iSb(8) = iSb(7) - 1
+                        RETURN
+                  ENDIF
+            ENDIF
+      ENDIF
+
+!     Not in prev box in x, but still could be in y/z
+      IF(xzero(2) - xsteps(2)*(2D0*sb%step(2) - sb%Ov(2)) 
+     2     <= sb%Ov(2)) THEN
+            IF (xsteps(2) .ne. 0) iSb(3) = iSb(1) - sb%n(1)
+!           And z...
+            IF((nsd.eq.3) .and. xzero(3) - 
+     2       xsteps(3)*(2D0*sb%step(3) 
+     3       - sb%Ov(3)) <= sb%Ov(3)) THEN
+                  IF (xsteps(3) .ne. 0)
+     2                  iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
+                  IF (xsteps(2) .ne. 0)
+     2                  iSb(7) = iSb(5) - sb%n(1)
+                  RETURN
+            ENDIF
+      ENDIF
+
+!     Now just z
+      IF((nsd.eq.3) .and. xzero(3) - 
+     2  xsteps(3)*(2D0*sb%step(3) 
+     3  - sb%Ov(3)) <= sb%Ov(3)) THEN
+            IF (xsteps(3) .ne. 0) iSb(5) = iSb(1) - sb%n(1)*sb%n(2)
+            RETURN
+      ENDIF
 
       RETURN
       END FUNCTION idSBp
@@ -1031,8 +1197,8 @@
             END IF
       ENDDO
          
-!     We couldn't find the element. Catch to see if in domain, and SB
-!     missed it. Could havbe this as a debug thing
+!     We couldn't find the element. Catch to see if Sb is the issue. Slows
+!     things down a lot and should really be run in debug mode.
       DO i = 1,msh%nEl
             xl = msh%x(:,msh%IEN(:,i))
             Nt = msh%nAtx(p%x,xl)
@@ -1063,7 +1229,7 @@
       TYPE(pRawType) p
       CLASS(mshType), POINTER :: msh
       REAL, ALLOCATABLE :: N(:)
-      REAL(KIND=8) dmin(nsd), randn
+      REAL(KIND=8) randn
       CHARACTER(LEN=stdL) :: fName
 
       msh => prt%dmn%msh(1)
@@ -1071,19 +1237,11 @@
       ALLOCATE(N(msh%eNoN))
       ALLOCATE(Nind(msh%eNoN))
       Nind = (/1:msh%eNoN/)
-      dmin = prt%mat%D()
-      CALL prt%sbp%new(msh,prt%n,dmin)
 
       !CALL RSEED(cm%id()) !!
       DO ip=1, prt%n
             p%u    = 0D0
             p%pID  = INT(ip,8)
-            !CALL RANDOM_NUMBER(p%x(:))
-            !IF (nsd .EQ. 2) p%x(3) = 0D0
-            !p%x(3) = p%x(3)*7.5D0
-            !p%x = (p%x - (/0.5D0,0.5D0,0D0/))*40D0
-            !p%x = p%x/2
-            !p%x(3) = 2*p%x(3)
             CALL RANDOM_NUMBER(randn)
             iel = INT(randn*(msh%nEl - 1),8) + 1
             N = 0
@@ -1108,7 +1266,6 @@
             ENDDO
             N(msh%eNoN) = 1 - SUM(N(1:(msh%eNoN - 1)))
             N = N(Nind)
-            !CALL RANDOM_NUMBER(N)
             N = N/sum(N)
 
             p%x = 0
@@ -1116,15 +1273,6 @@
                   p%x = p%x + N(i)*msh%x(:,msh%IEN(i,iel))
             ENDDO
 
-            !p%x(1) = 0D0
-            !p%x(2) = 0D0
-            !p%x(3) = 150D0/ip
-            !p%x(3) = 0.3D0
-            !if (ip.eq.2) p%x(3)=0.1D0
-            !if (mod(ip,2).eq.0) p%x(3) = 150/ip
-            !if (mod(ip,2).eq.1) p%x(3) = 150/(ip+1)+.2D0
-            !if (ip.eq.3) p%x = (/0D0,0.11D0, 75.1001D0/)
-            p%sbIDp = prt%sbp%id(p%x)
             p%sbIDe = prt%sbe%id(p%x)
 !           Reset other collisions
             IF(.not.ALLOCATED(p%OthColl)) ALLOCATE(p%OthColl(0))
@@ -1132,7 +1280,7 @@
             N = prt%shapef(ip,msh)
       ENDDO
       fName = 
-     2    "/home/gjr68/particle_tracking/alltxtres/prtcsvs/prt_0.csv"
+     2    "./alltxtres/prtcsvs/prt_0.vtk"
       CALL writePrt(prt,fName)
 
       RETURN
@@ -1183,7 +1331,7 @@
 !     Reynolds Number
       Rep = dp*magud*rhoF/mu
 !     Schiller-Neumann (finite Re) correction
-      fSN = 1D0 !+ 0.15D0*Rep**0.687D0   !!
+      fSN = 1D0 + 0.15D0*Rep**0.687D0
 !     Stokes corrected drag force
       apD = fSN/taup*relvel
 
@@ -1203,6 +1351,9 @@
 
       p1 => prt%dat(id1)
       p2 => prt%dat(id2)
+!     Weird things happen if both vel are zero (really only at start)
+      IF (ALL(abs(p1%u) .lt. EPSILON(p1%u)) .and.
+     2    ALL(abs(p2%u) .lt. EPSILON(p2%u))) RETURN
       dp  = prt%mat%D()
 
       p1%OthColl = [p1%OthColl,id2]
@@ -1242,8 +1393,7 @@
       tcr = minval(zeros)
 
 !     Exit function if collision won't occur during (remaining)timestep
-      if ((tcr.gt.p1%remdt) .and. (tcr.gt.p2%remdt)) 
-     2 RETURN
+      IF (tcr.gt.prt%dt) RETURN
 !     tcr must also occur after previous collisions with these particles
       IF (tcr.lt.(prt%dt - p1%remdt).or.tcr.lt.(prt%dt - p2%remdt))
      2 RETURN
@@ -1369,8 +1519,10 @@
 
 !     Update SB/element/shpfn info info of particles
       ALLOCATE(N(prt%dmn%msh(1)%eNoN))
-      p1%sbIDp = prt%sbp%id(p1%x)
-      p2%sbIDp = prt%sbp%id(p2%x)
+      IF (prt%couple .EQ. 4) THEN
+            p1%sbIDp = prt%sbp%id(p1%x)
+            p2%sbIDp = prt%sbp%id(p2%x)
+      END IF
       p1%sbIDe = prt%sbe%id(p1%x)
       p2%sbIDe = prt%sbe%id(p2%x)
       N = prt%shapeF(id1, prt%dmn%msh(1))
@@ -1410,7 +1562,7 @@
       litr = 0
       j = 0
       DO WHILE(litr.eq.0)
-            IF (ALLOCATED(b%fa) .and. ALLOCATED(b%fa(i)%els)) THEN
+            IF (ALLOCATED(b%fa) .and. ALLOCATED(b%fa(i)%els)) THEN !here
                   j = j + 1
             ELSE
                   EXIT
@@ -1692,6 +1844,7 @@
 
 !     End NatxiEle
 
+!           Also some parts are getting checked here multiple times per iter??
             IF (ALL(N.ge.-EPSILON(N)) .and. (tc.ge.-EPSILON(N)) 
      2                                .and. (tc.le.p%remdt)) THEN
                   p%faID(1) = i
@@ -1702,7 +1855,6 @@
 
       ENDDO
       ENDDO faceloop
-!     We couldn't find the right face in this searchbox
       print *, p%N, p%x, p%u, p%sbIDe, idp
       io%e = "Wrong searchbox"
       
@@ -1756,11 +1908,12 @@
 !           Select random node on face to set as particle position
             CALL RANDOM_NUMBER(rnd)
             rndi = FLOOR(msh%fa(i)%nEl*rnd + 1)
-!! silly hack b/c particles on edges get lost, will be fixed w/ periodic
             p%x = 0
             DO j = 1, msh%fa(i)%eNoN
-                  p%x = p%x + p%N(j)*msh%x(:,msh%fa(i)%IEN(j,rndi))
-            END DO    
+                  p%x = p%x + msh%x(:,msh%fa(i)%IEN(j,rndi))
+            END DO
+!           Put right in middle of face element
+            p%x = p%x/msh%fa(i)%eNoN
             EXIT faloop
             END IF
       ENDDO faloop
@@ -1820,39 +1973,29 @@
       SUBROUTINE advPrt(prt, idp)
       CLASS(prtType), INTENT(IN), TARGET :: prt
       INTEGER, INTENT(IN) :: idp
-      TYPE(matType), POINTER :: mat
       TYPE(mshType), POINTER :: msh
-      TYPE(pRawType), POINTER :: p, tp
-      TYPE(prtType), TARGET :: tmpprt
+      TYPE(pRawType), POINTER :: p
       TYPE(sbpType), POINTER :: sbp
       TYPE(sbeType), POINTER :: sbe
-      TYPE(VarType),POINTER :: u
-      REAL(KIND=8) rhoF,
-     2   mu, mp, g(nsd), dp,
-     3   rhoP, Ntmp(nsd+1), tt(4)
-      REAL(KIND=8), ALLOCATABLE :: N(:)
+      REAL(KIND=8) rhoF, rhoP,
+     2   mu, mp, g(nsd), dp
+      REAL(KIND=8), ALLOCATABLE :: N(:), Ntmp(:)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd),
-     2 prtxpred(nsd), pvelpred(nsd), tmpwr(nsd),mom, xt(nsd)
+     2  tmpwr(nsd),mom, xt(nsd), ut(nsd)
       INTEGER :: a, Ac, i, tsbIDp(2**nsd),tsbIDe, teID
 
 !     Gravity
-!! Find where grav actually is? (maybe mat%body forces)
-      g=0D0
-      g(3)=-1D0/idp
-      !if (mod(idp,2).eq.0) g(3) =1D0
-      !if (mod(idp,2).eq.1) g(3) =-1D0
-      !if (idp.eq.3) g= (/0,-1,0/)
-      !if (idp .eq.2) g(3) = 1D0
-      !tmpprt = prt                  !! Expensive with more sb
+      g(1) = prt%mat%fx()
+      g(2) = prt%mat%fy()
+      IF (nsd .eq. 3) g(3) = prt%mat%fz()
       msh => prt%dmn%msh(1)
-      ALLOCATE(N(msh%eNoN))
+      ALLOCATE(N(msh%eNoN), Ntmp(msh%eNoN))
       p  => prt%dat(idp)
-      sbp => prt%sbp
+      IF (prt%couple .EQ. 4) sbp => prt%sbp
       sbe => prt%sbe
-      tp => tmpprt%dat(1)
-      u => prt%Uns
-      !tmpprt%sb = sb                !! Expensive with more sb
+!     Original vel and position
       xt = p%x
+      ut = p%u
       rhoF  = prt%mns%rho()
       rhoP  = prt%mat%rho()
       mu    = prt%mns%mu()
@@ -1864,48 +2007,41 @@
 !     Total acceleration (just drag and buoyancy now)
       apT = apd + g*(1D0 - rhoF/rhoP)
 
-!!    For now, I'm going to do 1st order. It eases optimization stuff
+!     2nd order advance (Heun's Method)
+!     Predictor
+      p%x = p%x + p%remdt*p%u
+      p%u = p%u + p%remdt*apT
 
-!!     2nd order advance (Heun's Method)
-!!     Predictor
-!      pvelpred = p%u + p%remdt*apT
-!      prtxpred = p%x + p%remdt*p%u
-!      tp%u  = pvelpred
-!      tp%x  = prtxpred
-!
-!!     Find which searchbox prediction is in
-!!!     For some reason this changes apT???? makes no sense to me
-!      tp%sbID = sb%id(tp%x)   
-!!     Get shape functions/element of prediction
-!      Ntmp = tmpprt%shapeF(1, msh)
-!!     Check if predictor OOB
-!      IF (ANY(Ntmp.le.-EPSILON(N))) THEN
-!!     This should advance to the edge of the wall, and then change the
-!!     velocity, as well as giving remdt
-!            CALL prt%findwl(idp,msh)
-!            CALL prt%wall(idp,msh)
-!            p%x = p%x + p%remdt*p%u
-!            p%wall = .TRUE.
-!            RETURN
-!      END IF
-!!     Total acceleration (just drag and buoyancy now)
-!      again, because above changes this for some reason !!      
-!      apT = apd + g*(1D0 - rhoF/rhoP)
-!
-!!     Get drag acceleration of predicted particle
-!      apdpred = tmpprt%drag(1)
-!      apTpred = apdpred + g*(1D0 - rhoF/rhoP)
-!!     Corrector
-      p%u = p%u + p%remdt*apT!0.5D0*p%remdt*(apT+apTpred)
-      p%x = p%remdt*p%u + p%x
+!     Find which searchbox prediction is in
+      tsbIDe  = p%sbIDe
+      p%sbIDe = sbe%id(p%x)
+      N = p%N
+!     Get shape functions/element of prediction
+      Ntmp = prt%shapeF(idp, msh)
+!     Check if predictor OOB. Do first order if so
+      IF (ANY(Ntmp.le.-EPSILON(N))) THEN
+!           Resets position back, does first order to/beyond wall
+            apTpred = apT
+      ELSE
+!           Get drag acceleration of predicted particle
+            apdpred = prt%drag(idp)
+            apTpred = apdpred + g*(1D0 - rhoF/rhoP)
+      END IF
+      p%N = N
+      p%sbIDe = tsbIDe
 
-!     Send drag to fluid
-      DO a=1,msh%eNoN
-            Ac = msh%IEN(a,p%eID)
-            prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
-     2      apd*mP/rhoF/prt%wV(Ac)*p%N(a)
-!     2      0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
-      ENDDO
+!     Corrector
+      p%u = ut + p%remdt*(apT + apTpred)*0.5D0
+      p%x = xt + p%remdt*p%u
+
+!     Send drag to fluid (if tw coupled)
+      IF(prt%couple .GT. 1) THEN 
+            DO a=1,msh%eNoN
+                  Ac = msh%IEN(a,p%eID)
+                  prt%twc%v(:,Ac) = prt%twc%v(:,Ac) +
+     2            0.5D0*(apd + apdpred)*mP/rhoF/prt%wV(Ac)*p%N(a)
+            ENDDO
+      END IF
 
 !     For checking if momentum in by particles = momentum gain in system
       IF (prt%itr .EQ. 0) THEN
@@ -1917,27 +2053,32 @@
             !call sleep(1)
       END IF
 
-!     Check if particle went out of bounds
-      tsbIDe = p%sbIDe
-      tsbIDp = p%sbIDp
-      teID = p%eID
-      p%sbIDp = sbp%id(p%x)
-      p%sbIDe = sbe%id(p%x)
-      N = prt%shapeF(idp, msh)
-
-!     If so, do a wall collision and continue on
-      IF (ANY(N .le. -EPSILON(N))) THEN
-            p%x = xt
-            p%sbIDe = tsbIDe
-            p%sbIDp = tsbIDp
-            p%eID = teID
-            CALL prt%findwl(idp,msh)
-            CALL prt%wall(idp,msh)
-            p%x = p%x + p%remdt*p%u
+!     Check if particle went out of bounds continuously
+      N = -1D0
+      DO WHILE(ANY(N .le. EPSILON(N)))
+            tsbIDe = p%sbIDe
+            tsbIDp = p%sbIDp
+            teID = p%eID
+            IF (prt%couple .EQ. 4) p%sbIDp = sbp%id(p%x)
             p%sbIDe = sbe%id(p%x)
-            p%sbIDp = sbp%id(p%x)
             N = prt%shapeF(idp, msh)
-      END IF
+
+!           If OOB, do a wall collision and return to top
+            IF (ANY(N .le. -EPSILON(N))) THEN
+                  p%x = xt
+                  p%sbIDe = tsbIDe
+                  p%sbIDp = tsbIDp
+                  p%eID = teID
+                  CALL prt%findwl(idp,msh)
+                  CALL prt%wall(idp,msh)
+                  xt = p%x
+                  IF (prt%couple .EQ. 4) p%sbIDp = sbp%id(p%x)
+                  p%sbIDe = sbe%id(p%x)
+                  N = prt%shapeF(idp, msh)
+                  N = -1
+                  p%x = p%x + p%remdt*p%u
+            END IF
+      ENDDO
 
       RETURN
 
@@ -1949,6 +2090,7 @@
       INTEGER ip, a, i ,j, k,l, subit, citer,i2,i1
      2 , IDSBp(2**nsd), IDSBp1(2**nsd), IDSBp2(2**nsd), i12, i22
       TYPE(mshType), POINTER :: lM
+      INTEGER, ALLOCATABLE :: N(:) !!  Get rid of me!!
       REAL(KIND=8):: dtp, dp, taup, rhoP, mu,
      2 P1, P2, rhoF, umax(3) = 0D0, dmin(nsd)
       CHARACTER (LEN=stdl) fName
@@ -1958,6 +2100,7 @@
       rhoF  = eq%mns%rho()
       mu    = eq%mns%mu()
       dp    = eq%mat%D()
+      ALLOCATE(N(lm%eNoN))
 
 !     Reset twc force to zero
       eq%twc%v(:,:) = 0D0
@@ -1977,14 +2120,17 @@
 
       DO l = 1,subit
 
+!     Collision search boxes: only needed if 4 way coupled
+      IF(eq%couple .EQ. 4) THEN
       IF (eq%itr .EQ. 0) THEN
 !     Reset SB for particles
             DO i = 1, eq%n
                   umax = MAX(umax,ABS(eq%dat(i)%u))
             ENDDO
-            dmin = umax*dtp+dp
+            dmin = 2D0*umax*dtp+dp
             CALL eq%sbp%free()
             CALL eq%sbp%new(eq%dmn%msh(1), eq%n,dmin)
+      END IF
       END IF
 
       DO i=1,eq%n
@@ -1994,12 +2140,15 @@
                   eq%dat(i)%uo = eq%dat(i)%u
                   eq%dat(i)%eIDo = eq%dat(i)%eID
                   eq%dat(i)%sbIDeo= eq%dat(i)%sbIDe
-                  eq%dat(i)%sbIDpo= eq%dat(i)%sbIDp
 
-!                 Put particles in SBs
-                  idSBp = eq%dat(i)%sbIDp
-                  CALL eq%sbp%addprt(idSBp,i)
-            ENDIF  
+!                 Put particles in SBs (4-way coupled)
+                  IF (eq%couple .EQ. 4) THEN
+                        eq%dat(i)%sbIDpo = eq%dat(i)%sbIDp
+                        eq%dat(i)%sbIDp = eq%sbp%id(eq%dat(i)%x)
+                        idSBp = eq%dat(i)%sbIDp
+                        CALL eq%sbp%addprt(idSBp,i)
+                  END IF
+            ENDIF
 
 !           Set position and velocity to old variables in preparation 
 !           for iteration with INS
@@ -2007,15 +2156,19 @@
             eq%dat(i)%u = eq%dat(i)%uo
             eq%dat(i)%eID = eq%dat(i)%eIDo
             eq%dat(i)%sbIDe = eq%dat(i)%sbIDeo
-            eq%dat(i)%sbIDp = eq%dat(i)%sbIDpo
 
 !           Set initial advancing time step to solver time step
             eq%dat(i)%remdt = dtp
 !           Reset collisions from last time step
-            DEALLOCATE(eq%dat(i)%OthColl)
-            ALLOCATE  (eq%dat(i)%OthColl(0))
+            IF (eq%couple .EQ. 4) THEN
+                  DEALLOCATE(eq%dat(i)%OthColl)
+                  ALLOCATE  (eq%dat(i)%OthColl(0))
+                  eq%dat(i)%sbIDp = eq%dat(i)%sbIDpo
+            ENDIF
       ENDDO
 
+!     Collisions: only if 4-way coupled
+      IF( eq%couple .EQ. 4) THEN
 !     Go through each box and check collisions with all prts in box
       DO i = 1,eq%sbp%nt
             DO j=1,eq%sbp%box(i)%nprt
@@ -2042,9 +2195,9 @@
             i2 = eq%collpair(citer,2)
 
 !           Remove particles from sb before collision
-            idSBp = eq%dat(i1)%sbIDp
+            idSBp = eq%dat(i1)%sbIDpo
             CALL eq%sbp%rmprt(idSBp,i1)
-            idSBp = eq%dat(i2)%sbIDp
+            idSBp = eq%dat(i2)%sbIDpo
             CALL eq%sbp%rmprt(idSBp,i2)
 
 !           Enact collisions
@@ -2101,17 +2254,12 @@
 
 !     Reset collpair/collt
       IF (ALLOCATED(eq%collpair)) DEALLOCATE(eq%collpair, eq%collt)
+!     End of collisions
+      END IF
 
       DO i = 1,eq%n
 !           Now no particles will collide on their path. Safe to advance
             CALL eq%adv(i)
-!            IF (eq%itr .EQ. 0)  print *, eq%dat(i)%x(3),
-!     2            eq%dat(i)%u(3)
-           ! CALL RANDOM_NUMBER(eq%dat(i)%x(:))
-           ! eq%dat(i)%x(3) = eq%dat(i)%x(3)*7.5D0
-           ! eq%dat(i)%x = (eq%dat(i)%x - (/0.5D0,0.5D0,0D0/))*40D0
-           ! eq%dat(i)%x = eq%dat(i)%x/2
-           ! eq%dat(i)%sbide = eq%sbe%id(eq%dat(i)%x)
       ENDDO
             
       P1 = eq%dmn%msh(1)%integ(1,eq%Pns%s)
@@ -2123,15 +2271,14 @@
 !     3  (eq%dmn%msh(1)%integ(1, eq%Uns%v,3 ) -
 !     4  eq%dmn%msh(1)%integ(2, eq%Uns%v,3 ) -
 !     5  eq%dmn%msh(1)%integ(3, eq%Uns%v,3 ))*1.2D0,
-     6  ,P1,P2
+!     6  ,P1,P2
       ENDDO
-      print *, eq%dat(1)%x
 
 !     Write particle data if it's a multiple of ten timestep
       IF (mod(cTs,10).eq.0 .and. eq%itr.eq.0) THEN
             fName = 
-     2       "/home/gjr68/particle_tracking/alltxtres/prtcsvs/prt_"//
-     3       STR(cTs)//".csv"
+     2       "./alltxtres/prtcsvs/prt_"//
+     3       STR(cTs)//".vtk"
             CALL writePrt(eq,fName)
       ENDIF
 
@@ -2143,13 +2290,41 @@
 
       RETURN
       END SUBROUTINE solvePrt
+      !--------------------------------------------------------------------
+      FUNCTION alphind(C, n, Nelt, Npt, Ntt) RESULT(alph)
+!     Secant method to  find alpha opt given C, Nt, Nel, Np, n
+      INTEGER :: Nelt, Npt, Ntt
+      REAL(KIND=8) :: C, n, Nel, Np, Nt, alph,
+     2      x1, x2, f1, f2, Cf, xn, fn
+      Nel = REAL(Nelt)
+      Np = REAL(Npt)
+      Nt = REAL(Ntt)
+
+      Cf = C*Nel/Np/Nt
+      x1 = 0
+      x2 = 100
+      f1 = Cf - x1**(n+1)*(x1**n+1)**(1/n-1)
+      f2 = Cf - x2**(n+1)*(x2**n+1)**(1/n-1)
+      fn = 1
+      
+      DO WHILE (abs(fn) .gt. 1e-6)
+            xn = x1 - f1/(f1 - f2)*(x1-x2)
+            fn = Cf - xn**(n+1)*(xn**n+1)**(1/n-1)
+            x2 = x1
+            x1 = xn
+            f2 = f1
+            f1 = fn
+      ENDDO
+      alph = xn
+      END FUNCTION alphind
+
       
       END MODULE PRTMOD
 
 
       !! Urgent fixes:
-      !! Doesn't check collisions after wall
-      !! Don't have it implemented so it can hit multiple walls
-      !! Get subits working for sure
-      !! Shapefprt should really be a subroutine
-      !! When a prt hits a wall, check all sbe it passes thru (started)
+      !! Doesn't check collisions after wall (maybe make wall collisions part of coll list?)
+      !! Wall collisions just use first wall it hits
+            ! Very often not a problem, but could be for some domains, including cylindrical
+      !! Shapefprt should really be a subroutine, and N should be a part of dat
+      !! When a prt hits a wall, check all sbe it passes thru (started

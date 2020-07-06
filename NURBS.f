@@ -14,7 +14,8 @@
 !     of BSpline "bs" at Gauss points, given the knot "ni"
       PURE SUBROUTINE BSPNNX(ni, bs, N, Nxi)
          
-      USE COMMOD, ONLY: bsType, gXi
+      USE ELEMOD, ONLY: gXi
+      USE LOADNRBMOD
 
       IMPLICIT NONE
 
@@ -394,58 +395,6 @@
          lFa%nG    = lM%nG/lM%bs(lFa%d)%nG
          lFa%eNoN  = lM%eNoN/(lM%bs(lFa%d)%p + 1)
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-!      This is the part that used to be under MSH class
-
-
-!     This is the container for B-Splines
-      TYPE bsType
-!        Number of knots (p + nNo + 1)
-         INTEGER :: n = 0
-!        Number of Gauss points for integration
-         INTEGER nG
-!        Number of knot spans (element)
-         INTEGER :: nEl = 0
-!        Number of nodes/control-points
-         INTEGER :: nNo = 0
-!        Number of sample points in each element (for output)
-         INTEGER nSl
-!        The order
-         INTEGER p
-!        Knot vector
-         REAL(KIND=8), ALLOCATABLE :: xi(:)
-      CONTAINS
-!        To deallocate the B-Spline
-         PROCEDURE :: free => freeBs
-      END TYPE bsType
-
-      TYPE, EXTENDS(eleType) :: faceType
-!        Parametric direction normal to this face (NURBS)
-         INTEGER d
-
-
-!     Parent mesh type (single processor)
-      TYPE, EXTENDS(eleType) :: pMshType
-!        Number of elements sample points to be outputs (NURBS)
-         INTEGER nSl
-!        Local knot pointer (NURBS)
-         INTEGER, ALLOCATABLE :: INN(:,:)
-
-!        Control points weights (NURBS)
-         REAL(KIND=8), ALLOCATABLE :: nW(:)
-!        BSpline in different directions (NURBS)
-         TYPE(bsType), ALLOCATABLE :: bs(:)
-
-      SUBROUTINE freeBs(lBs)
-      CLASS(bsType) :: lBs
-
-      lBs%n   = 0
-      lBs%nEl = 0
-      lBs%nNo = 0
-
-      IF (ALLOCATED(lBs%xi)) DEALLOCATE(lBs%xi)
-      
-      RETURN 
-      END SUBROUTINE freeBs
 
 !#####################################################################
  

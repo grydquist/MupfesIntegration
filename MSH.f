@@ -26,6 +26,8 @@ c         PRIVATE
          INTEGER :: gnEl
 !        Global number of nodes
          INTEGER :: gnNo
+!        Global number of nodes
+         REAL(KIND=8) :: scaleF
 !        Global node number [nNo --> gnNo]
          INTEGER, ALLOCATABLE :: gN(:)
 !        Global to local node number (temporary) [gnNo --> nNo]
@@ -78,7 +80,6 @@ c         PRIVATE
       TYPE(mshType), TARGET :: msh
 
       INTEGER iFa, nFa
-      REAL(KIND=8) scaleF
       CHARACTER(LEN=stdL) stmp
       TYPE(fileType) f
       TYPE(lstType), POINTER :: lPtr, lPBC
@@ -90,9 +91,9 @@ c         PRIVATE
       lPtr => lst%get(f,"vtk file path",1)
       CALL msh%read(file=f)
          
-      scaleF = 1D0
-      lPtr => lst%get(scaleF,"Mesh scale factor",lb=0D0)
-      IF (ASSOCIATED(lPtr)) msh%x = msh%x*scaleF
+      msh%scaleF = 1D0
+      lPtr => lst%get(msh%scaleF,"Mesh scale factor",lb=0D0)
+      IF (ASSOCIATED(lPtr)) msh%x = msh%x*msh%scaleF
 
       DO iFa=1, nFa
          lPBC => lst%get(stmp,"Add face",iFa)

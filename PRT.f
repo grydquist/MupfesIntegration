@@ -154,6 +154,10 @@
          INTEGER, ALLOCATABLE :: collpair(:,:)
 !     Time of collision pairs
          REAL(KIND=8), ALLOCATABLE :: collt(:)
+!     Queue of particles to be removed
+         TYPE(stackType) :: rmQ
+!     Queue of particles to be added to global
+         TYPE(stackType) :: adQ
 
       CONTAINS
 !     Sets up all structure
@@ -176,6 +180,8 @@
          PROCEDURE :: wall => wallPrt
 !     Advances particle given time step
          PROCEDURE :: adv => advPrt
+!     Moves particles across partitions
+         PROCEDURE :: addrem => addremPrt
 
 !     Evaulate the governing equation
          PROCEDURE :: eval3 => eval3Prt
@@ -238,17 +244,22 @@
       CLASS(prtType), INTENT(IN) :: s
       CHARACTER(LEN=*), INTENT(IN) :: fName
       CHARACTER(LEN=1), PARAMETER :: names = 'dID'
-      INTEGER i, ip, l, fid, tN, pN, n
+      INTEGER i, ip, l, fid, tN, pN, n, on
       INTEGER(KIND=8) pos(2)
       CHARACTER(LEN=stdL) hdr
       TYPE(pRawType), POINTER :: p
       TYPE(prtType) prt, tPrt
       INTEGER, ALLOCATABLE :: lN(:)
       REAL(KIND=8), ALLOCATABLE :: tmpX(:,:), tmpV(:,:), 
-     2   tmpI(:)
+     2   tmpI(:), tx2(:,:), tv2(:,:)
 
-      tn = s%n
+      n = s%n
+      tn = cm%reduce(s%n)
+      CALL cm%bcast(tn)
+      IF (tN .EQ. 0) RETURN
+      IF((cm%mas())) THEN
       fid = 142
+
       OPEN(fid, FILE=TRIM(fName))
       CLOSE(fid,STATUS='DELETE')
       OPEN(fid, FILE=TRIM(fName), ACCESS="STREAM", 
@@ -277,26 +288,26 @@
       WRITE(fid,pos=pos(2)) hdr(1:l)
       pos(2:) = pos(2:) + l
 
-!     Total number of processed particles
-      pN = 0
-      DO 
-            n = tN-pN
-            IF (n .EQ. 0) EXIT
+      END IF
 
-            ALLOCATE(tmpV(3,n), tmpX(3,n))
-            DO ip=1, n
-            i = s%dat(ip)%pid
-            tmpX(:,i-pN) = s%dat(ip)%x
-            tmpV(:,i-pN) = s%dat(ip)%u
-            END DO
+!     Total number of processed particles
+      ALLOCATE(tmpV(3,n), tmpX(3,n))
+      ALLOCATE(tx2(3,s%n), tv2(3,s%n))
+      DO i = 1, s%n
+            tx2(:,i) = s%dat(i)%x
+            tv2(:,i) = s%dat(i)%u
+      ENDDO
+      tmpV = cm%gather(tv2)
+      tmpX = cm%gather(tx2)
+
+      IF (cm%mas()) THEN
             WRITE(fid,pos=pos(1)) tmpX
             WRITE(fid,pos=pos(2)) tmpV
             pos(1:2) = pos(1:2) + 24*n
-            DEALLOCATE(tmpV, tmpX)
-            pN = pN + n
-      END DO
-      CLOSE(fid)
-
+            pos(3:4) = pos(3:4) + 8*n
+      END IF
+      DEALLOCATE(tmpV, tmpX)
+      IF (cm%mas()) CLOSE(fid)
       RETURN
       END SUBROUTINE writePrt
 !---------------------------------------------------------------------
@@ -327,7 +338,8 @@
             CASE ("inlet")
                faTyp(iFa) = 1
                lPt2 =>lPBC%get(typ2,"Number")
-               eq%n = typ2
+!              MPI: evenly split particles across pareticles
+               eq%n = INT(typ2/cm%np())
             CASE("outlet")
                faTyp(iFa) = 2
             CASE("wall")
@@ -346,9 +358,205 @@
       END IF
       IF(typ3 .NE. 0) eq%couple = typ3
 
+!     MPI: Make it so there is the right number of total prts.
+      typ3 = cm%reduce(eq%n)
+      IF(cm%mas()) THEN
+            eq%n = eq%n + typ2 - typ3
+      END IF
+
       RETURN
       END FUNCTION newPrt
+!--------------------------------------------------------------------
+      SUBROUTINE addremPrt(prt)
+      IMPLICIT NONE
+      CLASS(prtType), INTENT(INOUT) :: prt
+      TYPE(prtType) tmpprt
+      TYPE(pRawType) :: tp
+      TYPE(pRawType), ALLOCATABLE :: tp2(:), tp3(:)
+      REAL(KIND=8), ALLOCATABLE :: ut(:,:), xt(:,:), N(:), t(:,:),
+     2 gut(:,:), gxt(:,:), rdt(:), grdt(:), t2(:), tmp(:,:)
+      INTEGER ip, i, nt, zeroadd, j, ntloc, cnt, nrem, locrem
 
+!     For if the particles have nothing to add
+      zeroadd = 0
+
+!     Compile a list of velocities and locations
+!     that need to be checked across all partitions
+      i = 0;
+      DO WHILE(prt%adQ%pull(ip))
+            i = i + 1
+            ALLOCATE(t(nsd,i))
+            t(:,1:i-1) = ut
+            CALL MOVE_ALLOC(t, ut)
+
+            ALLOCATE(t(nsd,i))
+            t(:,1:i-1) = xt
+            CALL MOVE_ALLOC(t, xt)
+
+            ALLOCATE(t2(i))
+            t2(1:i-1) = rdt
+            CALL MOVE_ALLOC(t2, rdt)
+            
+            ut(:,i) = prt%dat(ip)%u
+            xt(:,i) = prt%dat(ip)%x
+            rdt(i) = prt%dat(ip)%remdt
+      ENDDO
+            
+!     Get total/local lengths
+      nt = i
+      ntloc = nt
+      nt = cm%reduce(nt)
+
+!     Gather doesn't like empty matrices, so pad with zeros if empty
+      IF(i .eq. 0) THEN
+            zeroadd = 1
+      ENDIF
+      i = i + zeroadd
+
+!     So this is the total # of particles
+!     that need to be checked in each partition
+      nt = nt + cm%reduce(zeroadd)
+      
+      IF(NOT(ALLOCATED(ut))) THEN
+            ALLOCATE(ut(nsd,1), xt(nsd,1), rdt(1))
+            ut(:,:) = 0
+            xt(:,:) = 0
+            rdt = 0
+      ENDIF
+      ALLOCATE(gut(nsd, nt), gxt(nsd, nt), grdt(nt))
+
+!     Get the master list of locations and velocities to individual procs
+      gxt = cm%gather(xt)
+      gut = cm%gather(ut)
+      grdt = cm%gather(rdt)
+      IF (NOT(cm%mas())) THEN
+            DEALLOCATE(gut, gxt, grdt)
+            ALLOCATE(gut(nsd, nt), gxt(nsd, nt), grdt(nt))
+      ENDIF
+      CALL cm%bcast(gut)
+      CALL cm%bcast(gxt)
+      CALL cm%bcast(grdt)
+      cnt = 0
+
+!     Not the best way to do this, would be better with just a shpf function
+      tmpprt%n = 1
+      ALLOCATE(tmpprt%dat(1))
+      tmpprt%dat(1)%eIDo = 1
+      tmpprt%sbe = prt%sbe
+!     Start checking locations in individual partitions
+      outer:DO i = 1, nt
+!           Skip padded zeros
+            IF(ALL(gxt(:,i) .eq. 0)) CYCLE
+
+!           First just check the bounds of the subdomain
+            DO j = 1, nsd
+                  IF(gxt(j,i) .gt. maxval(prt%dmn%msh(1)%x(j,:)))
+     2              CYCLE outer
+                  IF(gxt(j,i) .lt. minval(prt%dmn%msh(1)%x(j,:)))
+     2              CYCLE outer
+            ENDDO
+      
+!           Put in temporary container
+            tmpprt%dat(1)%x = gxt(:,i)
+            tmpprt%dat(1)%u = gut(:,i)
+            tmpprt%dat(1)%remdt = grdt(i)
+            tmpprt%dat(1)%sbIDe = prt%sbe%id(gxt(:,i))
+!           Now do shpfn test, and add if in domain
+            N = tmpprt%shapef(1,prt%dmn%msh(1))
+            IF (ALL(N .gt. 0)) THEN
+                  CALL prt%adQ%push(i)
+                  cnt = cnt + 1
+                  CYCLE
+            END IF
+
+!           Now maybe it would've hit a wall. We need to move the particle
+!           back to try to find this wall though
+            tmpprt%dat(1)%x = gxt(:,i) - gut(:,i)*grdt(i)
+            CALL tmpprt%findwl(1,prt%dmn%msh(1))
+            
+!           If it wasn't able to find a wall, it would've added this location
+!           to the queue for removal in tmpprt. So if the queue is empty,
+!           it must have found the wall.
+            IF (NOT(tmpprt%rmQ%pull(ip))) THEN
+                  cnt = cnt+1
+                  CALL prt%adQ%push(i)
+!                 Need to advance to the wall!
+                  CALL tmpprt%wall(1,prt%dmn%msh(1))
+
+!                 We've moved tmpprt x to the wall.
+!                 Now let's change the gut to the post-wall vel
+!                 and advance the rest of the way
+                  gut(:,i) = tmpprt%dat(1)%u
+                  gxt(:,i) = tmpprt%dat(1)%x + 
+     2                 gut(:,i)*tmpprt%dat(1)%remdt
+            END IF
+      ENDDO outer
+
+!     Now remove all particles that need removing
+      i = 0
+!     Swap the current id with the last id,
+!     reduce size by 1 for all prts that need removal
+      DO WHILE(prt%rmQ%pull(ip))
+            i = i + 1
+            tp = prt%dat(prt%n)
+            tp%pid = prt%dat(ip)%pid
+            prt%dat(prt%n) = prt%dat(ip)
+            prt%dat(ip) = tp
+            prt%n = prt%n - 1
+      ENDDO
+
+!     After this swap, just make prt the particles
+!     that aren't removed
+      IF(i .ne. 0) THEN
+            tp2 = prt%dat
+            DEALLOCATE(prt%dat)
+            ALLOCATE(prt%dat(prt%n))
+            prt%dat = tp2(1:prt%n)
+      ENDIF
+      IF(ALLOCATED(tp2)) DEALLOCATE(tp2)
+
+      nrem = cm%reduce(i)
+      ntloc = cm%reduce(ntloc)
+      cnt = cm%reduce(cnt)
+
+!     Are the # of particles that crossed partitions
+!     equal to the # that were added to new ones?     
+      IF(cm%mas().and.cnt.ne.ntloc) THEN
+            print *, cnt, ntloc, nrem
+            print *, gxt
+            io%e = "we lost one..."
+      ENDIF
+
+!     Keep adding new particles to the end
+      i = 0
+      ALLOCATE(tp2(nt))
+      DO WHILE(prt%adQ%pull(ip))
+            i = i + 1
+            tp%x = gxt(:,ip)
+            tp%u = gut(:,ip)
+            tp%eIDo = 1
+            prt%n = prt%n + 1
+            tp%pid = prt%n
+            tp2(i) = tp
+      ENDDO
+
+!     Nothing to add!
+      IF (i .eq. 0) RETURN
+
+      tp3 = prt%dat
+      DEALLOCATE(prt%dat)
+      ALLOCATE(prt%dat(prt%n))
+      prt%dat(1:(prt%n-i)) = tp3
+      prt%dat((prt%n-i+1):prt%n) = tp2(1:i)
+
+!     Localize the last particles
+      DO j = (prt%n-i+1),prt%n
+            prt%dat(j)%sbIDe = prt%sbe%id(prt%dat(j)%x)
+            N = prt%shapef(j,prt%dmn%msh(1))
+!           Maybe localize SBp here too?
+      ENDDO
+
+      END SUBROUTINE addremPrt
 !--------------------------------------------------------------------
       SUBROUTINE setupPrt(eq, var)
       CLASS(prtType), INTENT(INOUT), TARGET :: eq
@@ -363,8 +571,8 @@
 
       eq%wV = 0D0
       DO i=1, eq%n
-         eq%ptr(i) = i
-         ALLOCATE(eq%dat(i)%N(eq%dmn%msh(1)%eNoN))
+            eq%ptr(i) = i
+            ALLOCATE(eq%dat(i)%N(eq%dmn%msh(1)%eNoN))
       ENDDO
       eq%mat  => FIND_MAT('Particle')
       eq%var(1) = gVarType(nsd,'PVelocity',eq%dmn)
@@ -1185,7 +1393,6 @@
             ELSE
                   ind = b%els(i-1)
             END IF
-
             xl = msh%x(:,msh%IEN(:,ind))
             N = msh%nAtx(p%x,xl)
 
@@ -1199,6 +1406,7 @@
          
 !     We couldn't find the element. Catch to see if Sb is the issue. Slows
 !     things down a lot and should really be run in debug mode.
+      IF(cm%np() .eq. 1) THEN
       DO i = 1,msh%nEl
             xl = msh%x(:,msh%IEN(:,i))
             Nt = msh%nAtx(p%x,xl)
@@ -1212,6 +1420,7 @@
                   io%e = "SBe issue"
             END IF
       ENDDO
+      ENDIF
 
 !     If it loops through everything and doesn't yield a positive shape 
 !     function, the particle is outside the domain.
@@ -1238,7 +1447,6 @@
       ALLOCATE(Nind(msh%eNoN))
       Nind = (/1:msh%eNoN/)
 
-      !CALL RSEED(cm%id()) !!
       DO ip=1, prt%n
             p%u    = 0D0
             p%pID  = INT(ip,8)
@@ -1537,6 +1745,7 @@
       CLASS(sbeType), POINTER ::sb
       TYPE(pRawType), POINTER :: p
       TYPE(boxelType),  POINTER :: b
+      TYPE(stackType), POINTER :: aQ, rQ
       REAL(KIND=8) :: Jac, xXi(nsd,nsd), Am(nsd,nsd), x1(nsd), tc
       REAL(KIND=8) :: N(msh%eNoN),xi(nsd),Bm(nsd), xc(nsd) 
       INTEGER :: i, j, a,gEl, faceNS(1,msh%fa(1)%eNoN), cnt,k,l
@@ -1562,10 +1771,13 @@
       litr = 0
       j = 0
       DO WHILE(litr.eq.0)
-            IF (ALLOCATED(b%fa) .and. ALLOCATED(b%fa(i)%els)) THEN !here
+            IF (ALLOCATED(b%fa)) THEN
                   j = j + 1
+                  IF(NOT(ALLOCATED(b%fa(i)%els))) THEN
+                        CYCLE faceloop
+                  ENDIF
             ELSE
-                  EXIT
+                  EXIT faceloop
             END IF
 
             IF (j .eq. size(b%fa(i)%els)) litr = 1
@@ -1844,7 +2056,6 @@
 
 !     End NatxiEle
 
-!           Also some parts are getting checked here multiple times per iter??
             IF (ALL(N.ge.-EPSILON(N)) .and. (tc.ge.-EPSILON(N)) 
      2                                .and. (tc.le.p%remdt)) THEN
                   p%faID(1) = i
@@ -1855,9 +2066,20 @@
 
       ENDDO
       ENDDO faceloop
-      print *, p%N, p%x, p%u, p%sbIDe, idp
-      io%e = "Wrong searchbox"
-      
+
+      IF(cm%np() .eq. 1) THEN
+!           We searched through all the SB walls and couldn't find
+!           the one. We must have the wrong SB
+            print *, p%N, p%x, p%u, p%sbIDe, idp
+            io%e = "Wrong searchbox"
+      ELSE
+!           We must have traveled to a new partition.
+!           Add to queue to send copies to all others to locate
+            aQ => prt%adQ
+            rQ => prt%rmQ
+            CALL rQ%push(idp)
+            CALL aQ%push(idp)
+      END IF
       END SUBROUTINE findwlPrt
 !--------------------------------------------------------------------
       SUBROUTINE wallPrt(prt, idp, msh)
@@ -1866,6 +2088,7 @@
       CLASS(mshType), INTENT(IN) :: msh
       TYPE(pRawType), POINTER :: p
       INTEGER :: i, j, rndi, Ac
+      CLASS(stackType), POINTER :: pQ
       REAL(KIND=8) :: dp, rho, k, nV(nsd), tV(nsd),
      2 a(nsd), b(nsd), vpar, vperp, temp(nsd), rnd,
      3 apd(nsd), mp, rhoF
@@ -1903,6 +2126,13 @@
 
 !     Exiting domain
       faloop:DO i = 1,msh%nFa
+!           MPI: Just completely remove particle from the entire thing
+!           To do this, add this to the removal stack
+            IF (cm%np() .gt. 0) THEN
+                  pQ => prt%rmQ
+                  CALL pQ%push(idp)
+                  RETURN
+            END IF
 !           Search for inlet to put particle back into
             IF (faTyp(i) .EQ. 1) THEN
 !           Select random node on face to set as particle position
@@ -1977,12 +2207,13 @@
       TYPE(pRawType), POINTER :: p
       TYPE(sbpType), POINTER :: sbp
       TYPE(sbeType), POINTER :: sbe
+      TYPE(stackType), POINTER :: pQ
       REAL(KIND=8) rhoF, rhoP,
      2   mu, mp, g(nsd), dp
       REAL(KIND=8), ALLOCATABLE :: N(:), Ntmp(:)
       REAL(KIND=8) :: apT(nsd), apd(nsd), apdpred(nsd), apTpred(nsd),
      2  tmpwr(nsd),mom, xt(nsd), ut(nsd)
-      INTEGER :: a, Ac, i, tsbIDp(2**nsd),tsbIDe, teID
+      INTEGER :: a, Ac, i, tsbIDp(2**nsd),tsbIDe, teID, rmID
 
 !     Gravity
       g(1) = prt%mat%fx()
@@ -1993,6 +2224,7 @@
       p  => prt%dat(idp)
       IF (prt%couple .EQ. 4) sbp => prt%sbp
       sbe => prt%sbe
+      pQ => prt%rmQ
 !     Original vel and position
       xt = p%x
       ut = p%u
@@ -2057,7 +2289,7 @@
       N = -1D0
       DO WHILE(ANY(N .le. EPSILON(N)))
             tsbIDe = p%sbIDe
-            tsbIDp = p%sbIDp
+            IF (prt%couple .EQ. 4)tsbIDp = p%sbIDp
             teID = p%eID
             IF (prt%couple .EQ. 4) p%sbIDp = sbp%id(p%x)
             p%sbIDe = sbe%id(p%x)
@@ -2070,7 +2302,26 @@
                   p%sbIDp = tsbIDp
                   p%eID = teID
                   CALL prt%findwl(idp,msh)
+
+!                 If in a different partition, leave this loop
+                  IF(pQ%pull(rmID)) THEN
+                        CALL pQ%push(rmID)
+                        IF(rmID .EQ. idp) THEN
+                              p%x = p%x + p%remdt*p%u
+                              RETURN
+                        ENDIF
+                  END IF
+
                   CALL prt%wall(idp,msh)
+
+!                 If particle is scheduled for removal, leave this loop
+                  IF(pQ%pull(rmID)) THEN
+                        CALL pQ%push(rmID)
+                        IF(rmID .EQ. idp) THEN
+                              p%x = p%x + p%remdt*p%u
+                              RETURN
+                        ENDIF
+                  END IF
                   xt = p%x
                   IF (prt%couple .EQ. 4) p%sbIDp = sbp%id(p%x)
                   p%sbIDe = sbe%id(p%x)
@@ -2132,6 +2383,16 @@
             CALL eq%sbp%new(eq%dmn%msh(1), eq%n,dmin)
       END IF
       END IF
+      
+!     If it's the first iteration, let's remove the particles that went out of
+!     bounds and move them to new processors.
+      IF (eq%itr .EQ. 0) THEN
+!           Check to see if any new particles have crossed into the domain
+            CALL eq%addrem()
+      ENDIF
+!     Free the stack from the previous iteration
+      CALL eq%adQ%free()
+      CALL eq%rmQ%free()
 
       DO i=1,eq%n
 !           If the first iteration, update last velocity, position, info
@@ -2318,13 +2579,12 @@
       alph = xn
       END FUNCTION alphind
 
-      
       END MODULE PRTMOD
 
 
       !! Urgent fixes:
       !! Doesn't check collisions after wall (maybe make wall collisions part of coll list?)
       !! Wall collisions just use first wall it hits
-            ! Very often not a problem, but could be for some domains, including cylindrical
+            ! Very often not a problem, but could be for convex some domains
       !! Shapefprt should really be a subroutine, and N should be a part of dat
-      !! When a prt hits a wall, check all sbe it passes thru (started
+      !! When a prt hits a wall, check all sbe it passes thru (started)

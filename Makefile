@@ -12,13 +12,13 @@
 
 # HERE COMES THE DEFINITIONS
 # PRT is below INS below
-TOP = ../../../trunk
+TOP = /mnt/f/GradSchool/mupfes/trunk
 include $(TOP)/Makefile.in
 
 BIN_DIR      = $(TOP)/bin
 PARMETIS_DIR = $(TOP)/external/ParMetis-3.2.0
-memLS_DIR    = ../memLS
-cplBC_DIR    = ../cplBC
+memLS_DIR    = $(TOP)/memLS
+cplBC_DIR    = $(TOP)/cplBC
 MPI_DIR      = $(TOP)/external/dummy_mpi
 
 memLS_INC = -I$(memLS_DIR)/include

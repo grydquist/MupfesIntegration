@@ -321,8 +321,10 @@
       CLASS(varType), INTENT(IN), OPTIONAL, TARGET :: twc
       TYPE(prtType) :: eq
       TYPE(lstType), POINTER :: lPt1,lPt2,lPBC
-      INTEGER nFa,iFa, typ2, typ3
+      INTEGER nFa,iFa, typ2, typ3, in_pres, in_proc
+      INTEGER, ALLOCATABLE :: in_proct(:)
       CHARACTER(LEN=stdL) stmp,typ1
+      REAL(KIND = 8) :: in_el = 0, in_elt = 0
 
       CALL eq%new(eqSp, dmn, lst)
       nFa  = lst%srch("Add BC")
@@ -331,15 +333,20 @@
       eq%mns => mns
       eq%Pns => Pns
       IF(PRESENT(twc)) eq%twc => twc
+      in_pres = 0
       DO iFa=1, nFa
             lPBC => lst%get(stmp,"Add BC",iFa)
             lPt1 => lPBC%get(typ1,"Face type")
             SELECT CASE (LOWER(TRIM(typ1)))
             CASE ("inlet")
+!              Any inlet elements in this proc? How many?
+               IF(eq%dmn%msh(1)%fa(iFa)%nEl .ne. 0) THEN
+                  in_el = eq%dmn%msh(1)%fa(iFa)%nEl
+                  in_pres = 1
+               ENDIF
+
                faTyp(iFa) = 1
                lPt2 =>lPBC%get(typ2,"Number")
-!              MPI: evenly split particles across pareticles
-               eq%n = INT(typ2/cm%np())
             CASE("outlet")
                faTyp(iFa) = 2
             CASE("wall")
@@ -359,8 +366,27 @@
       IF(typ3 .NE. 0) eq%couple = typ3
 
 !     MPI: Make it so there is the right number of total prts.
+!     Portion of inlet elements in this proc
+      in_elt = cm%reduce(in_el)
+      in_el = in_el/in_elt
+      eq%n = INT(in_el*typ2)
       typ3 = cm%reduce(eq%n)
-      IF(cm%mas()) THEN
+
+!     Make sure the number of particles is equal to mfs file
+      IF(in_pres .eq. 1) THEN
+            in_proc = cm%id()
+      ELSE
+            in_proc = cm%np()
+      ENDIF
+
+!     List of procs with inlets
+      in_proct = cm%gather(in_proc)
+!     Minimum proc id with inlet 
+      in_proc = MINVAL(in_proct)
+      CALL cm%bcast(in_proc)
+
+!     Adjust min proc with inlet to have right # of prts
+      IF(cm%id() .eq. in_proc) THEN
             eq%n = eq%n + typ2 - typ3
       END IF
 
@@ -1433,60 +1459,117 @@
       SUBROUTINE seedPrt(prt)
       IMPLICIT NONE
       CLASS(prtType), INTENT(INOUT) :: prt
-      INTEGER ip, iel, i, Npos, temp, cnt
+      INTEGER ip, iel, i, Npos, temp, cnt, fi, gEl, k,l
       INTEGER, ALLOCATABLE :: Nind(:)
       TYPE(pRawType) p
       CLASS(mshType), POINTER :: msh
-      REAL, ALLOCATABLE :: N(:)
+      TYPE(VarType),POINTER :: u
+      REAL, ALLOCATABLE :: N(:), xl(:,:)
       REAL(KIND=8) randn
       CHARACTER(LEN=stdL) :: fName
 
+      IF (prt%n .ne. 0) THEN
+
       msh => prt%dmn%msh(1)
+      u => prt%Uns
 
       ALLOCATE(N(msh%eNoN))
       ALLOCATE(Nind(msh%eNoN))
+      ALLOCATE(xl(nsd,msh%eNoN))
       Nind = (/1:msh%eNoN/)
 
+      ! Identify if inlet or not
+      ! Gather all partitions that have inlet
+      ! Only divide particles among those proccs
+      
+      ! Perhaps with a loop over elements?
+
+      ! First let's do division for 1 proc tho
+      ! Maybe also get velocity of inlet
+
+!     Loop over faces
+      DO fi = 1,msh%nFa
+!     We only want to seed on inlets
+      IF (faTyp(fi) .EQ. 1) THEN
       DO ip=1, prt%n
-            p%u    = 0D0
-            p%pID  = INT(ip,8)
+! This is for if you want to seed the particles randomly in the domain
+!             p%u    = 0D0
+!             CALL RANDOM_NUMBER(randn)
+!             iel = INT(randn*(msh%nEl - 1),8) + 1
+!             N = 0
+! !           Randomizing the order shape functions are put in
+!             DO i = size(Nind), 2, -1
+!                   CALL RANDOM_NUMBER(randn)
+!                   Npos = int(randn*i) + 1
+!                   temp = Nind(Npos)
+!                   Nind(Npos) = Nind(i)
+!                   Nind(i) = temp
+!             ENDDO
+!             DO i = 1,msh%eNoN - 1
+!                   cnt = 0
+!                   DO WHILE ((N(i) .lt. 1D-6) .or. 
+!      2                    (SUM(N(1:i)) .gt. 1 - (msh%eNoN - i)*1D-6))
+!                         CALL RANDOM_NUMBER(N(i))
+!                         N(i) = N(i)*(1 - SUM(N(1:(i - 1))))
+!                         IF(cnt.eq.99) N = (1/(msh%eNoN+0.001D0))
+!                         cnt = cnt+1
+!                   ENDDO
+!             ENDDO
+!             N(msh%eNoN) = 1 - SUM(N(1:(msh%eNoN - 1)))
+!             N = N(Nind)
+!             N = N/sum(N)
+
+!             p%x = 0
+!             DO i = 1,msh%eNoN
+!                   p%x = p%x + N(i)*msh%x(:,msh%IEN(i,iel))
+!             ENDDO
+
+
+! And this is for seeding just on the inlet
+!           Get a random element on the face
             CALL RANDOM_NUMBER(randn)
-            iel = INT(randn*(msh%nEl - 1),8) + 1
-            N = 0
-!           Randomizing the order shape functions are put in
-            DO i = size(Nind), 2, -1
-                  CALL RANDOM_NUMBER(randn)
-                  Npos = int(randn*i) + 1
-                  temp = Nind(Npos)
-                  Nind(Npos) = Nind(i)
-                  Nind(i) = temp
-            ENDDO
-!! Eventually target specific elements using parent domain
-            DO i = 1,msh%eNoN - 1
-                  cnt = 0
-                  DO WHILE ((N(i) .lt. 1D-6) .or. 
-     2                    (SUM(N(1:i)) .gt. 1 - (msh%eNoN - i)*1D-6))
-                        CALL RANDOM_NUMBER(N(i))
-                        N(i) = N(i)*(1 - SUM(N(1:(i - 1))))
-                        IF(cnt.eq.99) N = (1/(msh%eNoN+0.001D0))
-                        cnt = cnt+1
+            iel = INT(randn*(msh%fa(fi)%nEl - 1),8) + 1
+!           Find global element, get x, find which x's are on the face
+            
+            gEl = msh%fa(fi)%gE(iel)
+            xl = msh%x(:,msh%IEN(:,gEl))
+
+!           Move slightly insid so it's able to find the particle
+            N(:) = 1e-3
+!           Now we want to say that the shape functions are only 
+!           nonzero w.r.t. their corresponding face nodes
+            out: DO  k= 1, msh%fa(fi)%eNoN
+                  DO l = 1,msh%eNoN 
+                        IF (msh%IEN(l,gEl) .eq.
+     2                      msh%fa(fi)%IEN(k,iel)) THEN
+                              CALL RANDOM_NUMBER(N(l))
+                              CYCLE out
+                        ENDIF
                   ENDDO
-            ENDDO
-            N(msh%eNoN) = 1 - SUM(N(1:(msh%eNoN - 1)))
-            N = N(Nind)
+            ENDDO out
             N = N/sum(N)
-
+            
             p%x = 0
+            p%u = 0
+!           Seed it back in
             DO i = 1,msh%eNoN
-                  p%x = p%x + N(i)*msh%x(:,msh%IEN(i,iel))
+                  p%x = p%x + N(i)*msh%x(:,msh%IEN(i,gEl))
+                  p%u = p%u + N(i)*u%v(:,msh%IEN(i,gEl))
             ENDDO
-
+            
+            p%pID  = INT(ip,8)
             p%sbIDe = prt%sbe%id(p%x)
 !           Reset other collisions
             IF(.not.ALLOCATED(p%OthColl)) ALLOCATE(p%OthColl(0))
             prt%dat(ip) = p
             N = prt%shapef(ip,msh)
       ENDDO
+!     All parts seeded in the first inlet, leave loop
+      EXIT
+      ENDIF
+      ENDDO
+      ENDIF
+      
       fName = 
      2    "./alltxtres/prtcsvs/prt_0.vtk"
       CALL writePrt(prt,fName)

@@ -28,7 +28,7 @@ METIS_LIB = -L$(PARMETIS_DIR) -lparmetis -lmetis -lm
 cplBC_INC = -I$(cplBC_DIR)/include
 MPI_INC   = -I$(MPI_DIR)
 MPI_LIB   = -L$(MPI_DIR) -lmpi
-FFLAGS	  = -g -check all
+# FFLAGS	  = -g -check all
 
 MYEXEC = $(BIN_DIR)/mupfes.1.0a
 MYFUN  = UTIL.f \

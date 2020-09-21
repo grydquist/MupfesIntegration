@@ -605,7 +605,7 @@
       LOGICAL, INTENT(IN), OPTIONAL :: parabolic, zeroP, iFlx
       
       LOGICAL fParabolic, fZeroP, fIFlx
-      INTEGER iFa, i, a, b, Ac, j, nNo
+      INTEGER i, a, b, Ac, j, nNo
       REAL(KIND=8) tmp, nV(nsd), center(nsd), maxN
       LOGICAL, ALLOCATABLE :: gN(:)
       REAL(KIND=8), ALLOCATABLE :: s(:), sV(:,:), sVl(:,:)

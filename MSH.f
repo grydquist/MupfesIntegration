@@ -26,7 +26,7 @@ c         PRIVATE
          INTEGER :: gnEl
 !        Global number of nodes
          INTEGER :: gnNo
-!        Global number of nodes
+!        Scale factor
          REAL(KIND=8) :: scaleF
 !        Global node number [nNo --> gnNo]
          INTEGER, ALLOCATABLE :: gN(:)
